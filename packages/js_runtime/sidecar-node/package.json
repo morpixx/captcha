@@ -1,0 +1,16 @@
+{
+  "name": "captcha-js-sidecar",
+  "version": "0.1.0",
+  "description": "Node sidecar: run obfuscated challenge JS in node:vm isolates",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0"
+  }
+}

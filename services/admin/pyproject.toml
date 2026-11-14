@@ -1,0 +1,28 @@
+[project]
+name = "captcha-admin"
+version = "0.1.0"
+description = "Admin dashboard — per-type success/latency, solver list, proxy stats"
+requires-python = ">=3.12"
+dependencies = [
+    "captcha-common",
+    "captcha-db",
+    "captcha-queue",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "jinja2>=3.1.0",
+    "structlog>=24.4.0",
+]
+
+[project.scripts]
+captcha-admin = "captcha_admin.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/captcha_admin"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/captcha_admin/templates" = "captcha_admin/templates"
+"src/captcha_admin/static" = "captcha_admin/static"

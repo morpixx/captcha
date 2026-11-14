@@ -1,0 +1,18 @@
+[project]
+name = "captcha-js-runtime"
+version = "0.1.0"
+description = "V8 sandbox (py-mini-racer local, Node sidecar fallback) for obfuscated challenge JS"
+requires-python = ">=3.12"
+dependencies = [
+    "captcha-common",
+    "py-mini-racer>=0.12",
+    "httpx>=0.27",
+    "structlog>=24.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/captcha_js_runtime"]

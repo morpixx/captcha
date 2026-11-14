@@ -1,0 +1,53 @@
+services:
+  worker-browser:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: infra/docker/worker-browser.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis: {condition: service_healthy}
+    shm_size: 2gb
+
+  js-sidecar:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: infra/docker/js-sidecar.Dockerfile
+    restart: unless-stopped
+    ports: ["7474:7474"]
+
+  canary:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: infra/docker/canary.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+
+  prometheus:
+    profiles: ["full"]
+    image: prom/prometheus:latest
+    ports: ["9090:9090"]
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    profiles: ["full"]
+    image: grafana/grafana:latest
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes: [grafana-data:/var/lib/grafana]
+
+volumes:
+  grafana-data:

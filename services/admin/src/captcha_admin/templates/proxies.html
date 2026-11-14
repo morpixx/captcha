@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}proxies · captcha-admin{% endblock %}
+{% block window_switch %}{% endblock %}
+{% block content %}
+<h1>proxies</h1>
+<p class="muted">pool file: <code>{{ pool_file }}</code></p>
+{% if proxies %}
+<table class="grid narrow">
+<thead><tr><th class="n">#</th><th>proxy</th></tr></thead>
+<tbody>
+{% for p in proxies %}
+<tr><td class="n muted">{{ p.idx }}</td><td><code>{{ p.proxy }}</code></td></tr>
+{% endfor %}
+</tbody>
+</table>
+<p class="muted">
+  per-host pass/fail counters are not yet exported by <code>captcha_proxy</code>;
+  this page will light up once the pool exposes a read-only snapshot.
+</p>
+{% else %}
+<p class="muted">pool file is empty or missing</p>
+{% endif %}
+{% endblock %}

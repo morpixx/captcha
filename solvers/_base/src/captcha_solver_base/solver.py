@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
+
+import msgspec
+
+from captcha_common import CaptchaType, SolveMode, SolverResult, Task
+from captcha_common.errors import CaptchaError
+
+
+class SolverInfo(msgspec.Struct, frozen=True, kw_only=True):
+    """Static metadata — discovered by the registry at import time."""
+
+    name: str
+    types: tuple[CaptchaType, ...]
+    http: bool = True
+    browser: bool = False
+    needs_js_runtime: bool = False
+    needs_gpu: bool = False
+    experimental: bool = False
+    version: str = "0.1.0"
+
+
+@dataclass
+class SolverContext:
+    """Runtime injection: shared clients the solver gets from the worker.
+
+    Solvers never new up their own HTTP client, proxy, model handle, or JS runtime —
+    they take what the worker gives. Makes tests isolate the solver, not the world.
+    """
+
+    http: Any = None              # captcha_http.Client
+    js_runtime: Any = None        # captcha_js_runtime.Runtime
+    proxy_pool: Any = None        # captcha_proxy.Pool
+    fingerprint_store: Any = None # captcha_fingerprint.Store
+    models: Any = None            # captcha_models.Registry
+    sensors: Any = None           # captcha_sensors.Registry
+    browser: Any = None           # captcha_browser.Pool (fallback only)
+    config: Any = None            # captcha_common.Settings
+    logger: Any = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+class Solver(ABC):
+    """Base class for all captcha-type plugins.
+
+    Lifecycle:
+      1. registry discovers via entry_points at worker startup
+      2. worker instantiates, calls `prepare(ctx)` once
+      3. for each task matching `info.types`, worker calls `solve_http(task, ctx)`
+         (or `solve_browser(task, ctx)` when preferred_mode == BROWSER or fallback)
+      4. worker calls `shutdown()` on worker stop
+
+    Contract: raise a CaptchaError subclass on known failure modes; let
+    anything else surface as unknown error — the worker classifies and logs.
+    """
+
+    info: ClassVar[SolverInfo]
+
+    def __init__(self) -> None:
+        pass
+
+    async def prepare(self, ctx: SolverContext) -> None:  # noqa: B027 - intentional no-op default
+        """Preload models, warm caches, pre-build sensor templates. Called once."""
+
+    async def shutdown(self) -> None:  # noqa: B027
+        """Release GPU, close sessions. Called once."""
+
+    @abstractmethod
+    async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
+        """HTTP-first solve. Default path for every type."""
+
+    async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
+        """Browser fallback. Default: not supported."""
+        raise CaptchaError("browser mode not supported for this solver", context={"type": task.type.value})
+
+    def supports(self, mode: SolveMode) -> bool:
+        if mode == SolveMode.HTTP:
+            return self.info.http
+        if mode == SolveMode.BROWSER:
+            return self.info.browser
+        return True

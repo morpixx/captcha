@@ -1,0 +1,37 @@
+[project]
+name = "captcha-solver-interactive"
+version = "0.1.0"
+description = "Interactive misc captcha plugins (MTCaptcha, Tencent, Yidun, Alibaba, Prosopo, CaptchaFox, VK, Yandex SmartCaptcha, Temu, Binance, Hunt, Basilisk, CutCaptcha, atbCaptcha)"
+requires-python = ">=3.12"
+dependencies = [
+    "captcha-common",
+    "captcha-solver-base",
+    "captcha-http",
+    "captcha-sensors",
+    "captcha-fingerprint",
+    "msgspec>=0.18.6",
+    "structlog>=24.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/captcha_solver_interactive"]
+
+[project.entry-points."captcha.solvers"]
+mtcaptcha = "captcha_solver_interactive.mtcaptcha.solver:MTCaptchaSolver"
+tencent = "captcha_solver_interactive.tencent.solver:TencentSolver"
+yidun = "captcha_solver_interactive.yidun.solver:YidunSolver"
+alibaba = "captcha_solver_interactive.alibaba.solver:AlibabaSolver"
+prosopo = "captcha_solver_interactive.prosopo.solver:ProsopoSolver"
+captchafox = "captcha_solver_interactive.captchafox.solver:CaptchaFoxSolver"
+vk = "captcha_solver_interactive.vk.solver:VKSolver"
+yandex = "captcha_solver_interactive.yandex.solver:YandexSolver"
+temu = "captcha_solver_interactive.temu.solver:TemuSolver"
+binance = "captcha_solver_interactive.binance.solver:BinanceSolver"
+hunt = "captcha_solver_interactive.hunt.solver:HuntSolver"
+basilisk = "captcha_solver_interactive.basilisk.solver:BasiliskSolver"
+cutcaptcha = "captcha_solver_interactive.cutcaptcha.solver:CutCaptchaSolver"
+atbcaptcha = "captcha_solver_interactive.atbcaptcha.solver:AtbCaptchaSolver"

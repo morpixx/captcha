@@ -1,0 +1,62 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# uv
+.venv/
+.python-version
+
+# env
+.env
+.env.local
+.env.*.local
+
+# data (large, lives in S3/minio)
+data/datasets/
+data/checkpoints/
+data/fingerprints/
+data/js_challenges/
+data/proxies/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# logs
+*.log
+logs/
+
+# os
+.DS_Store
+Thumbs.db
+
+# ide
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+
+# jupyter
+.ipynb_checkpoints/
+ml/notebooks/*.ipynb
+
+# docker
+.docker/
+
+# secrets
+*.pem
+*.key
+proxies.txt

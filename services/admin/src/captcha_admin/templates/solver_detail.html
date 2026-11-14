@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ solver.name }} · captcha-admin{% endblock %}
+{% block content %}
+<h1>{{ solver.name }} <small class="muted">({{ window }})</small></h1>
+<p><a href="/solvers">&larr; all solvers</a></p>
+
+<h2>per task type</h2>
+{% if solver.per_type %}
+<table class="grid">
+<thead><tr><th>type</th><th class="n">runs</th><th class="n">ok</th><th class="n">fail</th><th class="n">avg ms</th></tr></thead>
+<tbody>
+{% for r in solver.per_type %}
+<tr>
+  <td>{{ r.task_type }}</td>
+  <td class="n">{{ r.runs }}</td>
+  <td class="n ok">{{ r.ok }}</td>
+  <td class="n bad">{{ r.fail }}</td>
+  <td class="n">{{ '%.1f' | format(r.avg_latency_ms or 0) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}<p class="muted">no runs</p>{% endif %}
+
+<h2>top error codes</h2>
+{% if solver.errors %}
+<table class="grid narrow">
+<thead><tr><th>code</th><th class="n">n</th></tr></thead>
+<tbody>
+{% for e in solver.errors %}
+<tr><td><code>{{ e.code }}</code></td><td class="n">{{ e.n }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}<p class="muted">none</p>{% endif %}
+
+<h2>recent runs</h2>
+{% if solver.recent %}
+<table class="grid">
+<thead><tr>
+  <th class="n">id</th><th>type</th><th>ok</th><th class="n">ms</th>
+  <th>error</th><th>task</th><th>started</th>
+</tr></thead>
+<tbody>
+{% for r in solver.recent %}
+<tr>
+  <td class="n muted">{{ r.id }}</td>
+  <td>{{ r.task_type }}</td>
+  <td>{% if r.ok %}<span class="pill ok">ok</span>{% else %}<span class="pill bad">fail</span>{% endif %}</td>
+  <td class="n">{{ r.latency_ms or '' }}</td>
+  <td><code>{{ r.error_code or '' }}</code></td>
+  <td class="muted">{{ r.task_id or '' }}</td>
+  <td class="muted">{{ r.started_at or '' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}<p class="muted">no runs</p>{% endif %}
+{% endblock %}

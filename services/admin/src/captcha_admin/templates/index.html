@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}overview · captcha-admin{% endblock %}
+{% block content %}
+<h1>overview <small class="muted">({{ window }})</small></h1>
+
+<section class="cards">
+  <div class="card"><div class="k">total</div><div class="v">{{ totals.total }}</div></div>
+  <div class="card ok"><div class="k">ready</div><div class="v">{{ totals.ready }}</div></div>
+  <div class="card bad"><div class="k">failed</div><div class="v">{{ totals.failed }}</div></div>
+  <div class="card"><div class="k">processing</div><div class="v">{{ totals.processing }}</div></div>
+  <div class="card"><div class="k">pending</div><div class="v">{{ totals.pending }}</div></div>
+</section>
+
+<h2>per type</h2>
+{% if types %}
+<table class="grid">
+<thead><tr>
+  <th>type</th><th class="n">total</th><th class="n">ready</th><th class="n">failed</th>
+  <th class="n">success%</th><th class="n">avg&nbsp;ms</th>
+</tr></thead>
+<tbody>
+{% for t in types %}
+<tr>
+  <td><a href="/tasks?type={{ t.type }}">{{ t.type }}</a></td>
+  <td class="n">{{ t.total }}</td>
+  <td class="n ok">{{ t.ready }}</td>
+  <td class="n bad">{{ t.failed }}</td>
+  <td class="n">{{ '%.1f' | format(t.success_rate * 100) }}</td>
+  <td class="n">{{ '%.1f' | format(t.avg_latency_ms) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">no tasks in window</p>
+{% endif %}
+
+<h2>top solvers</h2>
+{% if solvers %}
+<table class="grid">
+<thead><tr>
+  <th>solver</th><th class="n">runs</th><th class="n">success%</th>
+  <th class="n">avg&nbsp;ms</th><th class="n">p95&nbsp;ms</th><th>last run</th>
+</tr></thead>
+<tbody>
+{% for s in solvers %}
+<tr>
+  <td><a href="/solvers/{{ s.name }}">{{ s.name }}</a></td>
+  <td class="n">{{ s.runs }}</td>
+  <td class="n">{{ '%.1f' | format(s.success_rate * 100) }}</td>
+  <td class="n">{{ s.avg_latency_ms }}</td>
+  <td class="n">{{ s.p95_latency_ms }}</td>
+  <td class="muted">{{ s.last_run or '—' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">no solver runs in window</p>
+{% endif %}
+
+{% endblock %}

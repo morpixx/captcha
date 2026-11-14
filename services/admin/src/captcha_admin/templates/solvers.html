@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}solvers · captcha-admin{% endblock %}
+{% block content %}
+<h1>solvers <small class="muted">({{ window }})</small></h1>
+{% if solvers %}
+<table class="grid">
+<thead><tr>
+  <th>name</th><th class="n">runs</th><th class="n">ok</th><th class="n">fail</th>
+  <th class="n">success%</th><th class="n">avg&nbsp;ms</th><th class="n">p95&nbsp;ms</th><th>last</th>
+</tr></thead>
+<tbody>
+{% for s in solvers %}
+<tr>
+  <td><a href="/solvers/{{ s.name }}">{{ s.name }}</a></td>
+  <td class="n">{{ s.runs }}</td>
+  <td class="n ok">{{ s.ok }}</td>
+  <td class="n bad">{{ s.fail }}</td>
+  <td class="n">{{ '%.1f' | format(s.success_rate * 100) }}</td>
+  <td class="n">{{ s.avg_latency_ms }}</td>
+  <td class="n">{{ s.p95_latency_ms }}</td>
+  <td class="muted">{{ s.last_run or '—' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">no solver runs in window</p>
+{% endif %}
+{% endblock %}

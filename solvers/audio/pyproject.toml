@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "captcha-solver-audio"
+version = "0.1.0"
+description = "Audio-captcha solver backed by Whisper (faster-whisper preferred)."
+requires-python = ">=3.12"
+dependencies = [
+    "captcha-common",
+    "captcha-solver-base",
+    "captcha-http",
+    "soundfile>=0.12",
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+faster-whisper = [
+    "faster-whisper>=1.0",
+]
+whisper = [
+    "openai-whisper",
+]
+
+[project.entry-points."captcha.solvers"]
+audio_captcha = "captcha_solver_audio.audio_captcha:AudioCaptchaSolver"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/captcha_solver_audio"]
