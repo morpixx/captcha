@@ -96,5 +96,6 @@
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
   "workbench.iconTheme": "material-icon-theme",
-  "// icon clone": "folder icons are personal: see docs/workflow.md"
+  "python.terminal.activateEnvironment": false,
+  "terminal.integrated.defaultProfile.windows": "PowerShell"
 }
