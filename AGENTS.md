@@ -21,6 +21,35 @@ worker must boot without optional extras (`cv`, `browser`) installed.
 | `docs/workflow.md` | git flow, branch rules, PR checklist |
 | `runbooks/_template.md` | how a per-type runbook is written (required with a new solver) |
 
+## Task routing: read this before you start
+
+| if the task is about | read first |
+|---|---|
+| adding/fixing a solver for a captcha type | `runbooks/_template.md`, `solvers/base.py`, `solvers/loader.py`, `domain/solution.py` |
+| antibot payload (CF, Akamai, DataDome, Kasada, PX, Imperva, …) | `engines/base.py`, `engines/<engine>/builder.py`, `docs/architecture.md#регистрация-солверов` |
+| API behaviour, error codes, response shape | `docs/protocol.md`, `services/gateway/` |
+| queue, retries, dead letters, lanes | `adapters/queue/`, `domain/lanes.py`, `docs/architecture.md` |
+| database schema or migrations | `adapters/storage/models.py`, `adapters/storage/migrations/` |
+| transport, TLS/JA3, proxies | `adapters/transport/`, `adapters/proxy/` |
+| JS challenge execution | `adapters/jssandbox/`, `engines/base.py` |
+| ML models, weights, CV solvers | `adapters/weights/`, `solvers/classification/`, `solvers/detection/` |
+| docker/compose/CI | `infra/docker/app.Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` |
+| process, branches, review | `docs/workflow.md` |
+
+If the file list does not answer the question, run `grep` before opening the whole package.
+
+## Voice
+
+Same style in every session, regardless of who is driving:
+
+- dry, direct, a little blunt; no preambles, no recaps of what was just done, no "let me know if…";
+- lowercase is fine in chat, proper case for code, paths and identifiers;
+- chat language follows the human (Russian if he writes Russian), code, comments, docstrings and
+  commit messages stay English;
+- claims about behaviour are verified by running something (`uv run pytest`, a small script) or
+  marked as unverified — never asserted from memory;
+- when a fact changed since it was written down, say so and fix the doc in the same pass.
+
 ## Golden rules
 
 1. **Dependencies point one way:** `services → application → domain`; `adapters → domain`;
