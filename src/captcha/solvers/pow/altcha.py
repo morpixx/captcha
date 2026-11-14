@@ -12,10 +12,12 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Callable, ClassVar
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 from captcha.domain import CaptchaType, SolverResult, Task
-from captcha.domain.errors import TimeoutError as CaptchaTimeout, UnsolvableError
+from captcha.domain.errors import TimeoutError as CaptchaTimeout
+from captcha.domain.errors import UnsolvableError
 from captcha.solvers import Solver, SolverContext, SolverInfo
 
 log = logging.getLogger(__name__)
@@ -41,8 +43,9 @@ def _parse_challenge(payload: dict[str, Any]) -> tuple[str, str, int, str, str]:
     signature = payload.get("signature", "")
 
     if algo not in _SUPPORTED_ALGOS:
-        raise UnsolvableError("altcha: unsupported algorithm",
-                              context={"algo": algo, "supported": sorted(_SUPPORTED_ALGOS)})
+        raise UnsolvableError(
+            "altcha: unsupported algorithm", context={"algo": algo, "supported": sorted(_SUPPORTED_ALGOS)}
+        )
     if not isinstance(challenge, str) or not challenge:
         raise UnsolvableError("altcha: challenge missing", context={"got": type(challenge).__name__})
     if not isinstance(salt, str):
@@ -70,8 +73,7 @@ class AltchaSolver(Solver):
         hasher = _SUPPORTED_ALGOS[algo]
 
         if not (0 <= max_n <= _MAX_N_CEILING):
-            raise UnsolvableError("altcha: max out of range",
-                                  context={"max": max_n, "ceiling": _MAX_N_CEILING})
+            raise UnsolvableError("altcha: max out of range", context={"max": max_n, "ceiling": _MAX_N_CEILING})
 
         mono_deadline = self._resolve_deadline(task.deadline_ts)
 
@@ -83,12 +85,11 @@ class AltchaSolver(Solver):
             if hasher(salt_bytes + str(n).encode("ascii")).hexdigest() == challenge:
                 found = n
                 break
-            if (n & _DEADLINE_CHECK_MASK) == 0 and mono_deadline is not None:
-                if time.monotonic() > mono_deadline:
-                    raise CaptchaTimeout(
-                        "altcha: deadline exceeded",
-                        context={"last_n": n, "max": max_n},
-                    )
+            if (n & _DEADLINE_CHECK_MASK) == 0 and mono_deadline is not None and time.monotonic() > mono_deadline:
+                raise CaptchaTimeout(
+                    "altcha: deadline exceeded",
+                    context={"last_n": n, "max": max_n},
+                )
 
         if found is None:
             raise UnsolvableError(
@@ -120,6 +121,5 @@ class AltchaSolver(Solver):
             return None
         budget = deadline_ts - time.time()
         if budget <= 0:
-            raise CaptchaTimeout("altcha: already past deadline",
-                                 context={"deadline_ts": deadline_ts})
+            raise CaptchaTimeout("altcha: already past deadline", context={"deadline_ts": deadline_ts})
         return time.monotonic() + budget

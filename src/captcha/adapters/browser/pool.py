@@ -10,17 +10,18 @@ Design:
 
 Not thread-safe. Driven by one worker's asyncio loop.
 """
+
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any
 
-from captcha.domain.errors import CaptchaError, ConfigError, TimeoutError as CaptchaTimeout
-
 from captcha.adapters.browser.launchers import BackendName, Launcher, pick_launcher
 from captcha.adapters.browser.session import Session, SessionConfig
+from captcha.domain.errors import CaptchaError, ConfigError
+from captcha.domain.errors import TimeoutError as CaptchaTimeout
 
 
 @dataclass
@@ -108,7 +109,7 @@ class Pool:
 
         try:
             await asyncio.wait_for(self._sem.acquire(), timeout=self.acquire_timeout_sec)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise CaptchaTimeout(
                 "no browser slot available",
                 context={"size": self.size, "timeout_sec": self.acquire_timeout_sec},
@@ -166,24 +167,18 @@ class Pool:
                     slot = self._idle.get_nowait()
                     await _safe_close(slot.context)
             if self._browser is not None:
-                try:
+                with suppress(Exception):
                     await self._browser.close()
-                except Exception:
-                    pass
                 self._browser = None
             if self._pw_ctx is not None:
-                try:
+                with suppress(Exception):
                     await self._pw_ctx.__aexit__(None, None, None)
-                except Exception:
-                    pass
                 self._pw_ctx = None
 
 
 async def _safe_close(context: Any) -> None:
-    try:
+    with suppress(Exception):
         await context.close()
-    except Exception:
-        pass
 
 
 def _parse_proxy(url: str) -> dict[str, str]:

@@ -21,7 +21,6 @@ from typing import Any
 
 from captcha.domain.enums import AntibotEngine
 from captcha.domain.errors import SensorError
-
 from captcha.engines.base import BuildContext, SensorBuilder
 from captcha.engines.registry import register_builder
 
@@ -54,7 +53,7 @@ class KasadaBuilder(SensorBuilder):
         #                                             difficulty=difficulty)
         pow_answers: list[int] = []
 
-        cd_payload = {
+        {
             "workTime": 0,  # FILL: ms elapsed during PoW
             "id": "",  # FILL: ctx.extra["kpsdk_id"]
             "duration": 0,  # FILL: wall clock of this request assembly

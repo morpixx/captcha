@@ -109,7 +109,7 @@ class S3Writer:
         except (BotoCoreError, ClientError) as exc:
             logger.error("pipeline.s3.put_failed", key=key, error=str(exc))
             return False
-        except Exception as exc:  # noqa: BLE001 — final guard; we never want a sampler run to crash
+        except Exception as exc:
             logger.exception("pipeline.s3.put_unexpected", key=key, error=str(exc))
             return False
         return True

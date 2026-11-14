@@ -16,7 +16,6 @@ from captcha.behavior import bezier_path, humanize_timing
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import ModelInferenceError, UnsolvableError
 from captcha.solvers import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.detection._yolo import decode_image, load_yolo, predict, resolve_class_ids
 
 
@@ -83,7 +82,7 @@ class DragDropSolver(Solver):
         rng = np.random.default_rng(task.payload.get("seed"))
         path = bezier_path(src_xy, dst_xy, n_points=n_points, jitter=0.5, curvature=0.18, rng=rng)
         ts = humanize_timing(n_points, mean_ms=16.0, std_ms=5.0, rng=rng)
-        trajectory = [[float(x), float(y), int(t)] for (x, y), t in zip(path, ts)]
+        trajectory = [[float(x), float(y), int(t)] for (x, y), t in zip(path, ts, strict=False)]
 
         latency_ms = (time.monotonic() - t0) * 1000.0
         return SolverResult(

@@ -19,8 +19,8 @@ from typing import Any
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -52,7 +52,7 @@ class ProsopoSolver(InteractiveBase):
         )
         try:
             data = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("prosopo challenge not JSON", context={"status": r.status}) from exc
 
         captchas = data.get("captchas") or []
@@ -73,6 +73,7 @@ class ProsopoSolver(InteractiveBase):
                         images.append((await ctx.http.get(raw)).body)
                     elif isinstance(raw, str):
                         import base64
+
                         images.append(base64.b64decode(raw.split(",", 1)[-1]))
             # Delegate to classification-grid CV. Payload is a list of PNG
             # bytes (row-major) + the natural-language `target`.
@@ -102,7 +103,7 @@ class ProsopoSolver(InteractiveBase):
         vr = await ctx.http.post(ep.SUBMIT_IMAGE, json=body)
         try:
             vdata = vr.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("prosopo submit not JSON", context={"status": vr.status}) from exc
 
         cid: str | None = vdata.get("commitmentId") or vdata.get("commitment_id")

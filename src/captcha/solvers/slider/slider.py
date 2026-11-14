@@ -13,7 +13,6 @@ from typing import Any, ClassVar
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import UnsolvableError
 from captcha.solvers import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.slider.gap_detect import detect_gap
 from captcha.solvers.slider.trajectory import build_trajectory
 

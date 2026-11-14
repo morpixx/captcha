@@ -57,7 +57,7 @@ def test_altcha_picks_lowest_matching_n():
 def test_altcha_unsolvable_raises():
     payload = {
         "algorithm": "SHA-256",
-        "challenge": "0" * 64,   # no number in range produces this
+        "challenge": "0" * 64,  # no number in range produces this
         "max": 500,
         "salt": "nope",
         "signature": "sig",

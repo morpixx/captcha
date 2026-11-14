@@ -13,13 +13,12 @@ Flow:
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -58,7 +57,7 @@ class BinanceSolver(InteractiveBase):
         )
         try:
             data = (r.json() or {}).get("data") or {}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("binance getCaptcha not JSON", context={"status": r.status}) from exc
 
         sig = data.get("sig")
@@ -96,7 +95,7 @@ class BinanceSolver(InteractiveBase):
         )
         try:
             vdata = (vr.json() or {}).get("data") or {}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("binance verify not JSON", context={"status": vr.status}) from exc
         token = vdata.get("token") or vdata.get("validateId")
         if not token:

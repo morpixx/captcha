@@ -87,9 +87,7 @@ class SuccessRateTracker:
         cutoff_ms = ts_ms - self._window_sec * 1000
         # Pull the window; filter in Python since ZRANGEBYLEX on fixed suffix
         # requires a different encoding and this call is infrequent.
-        members: list[bytes | str] = await self._r.zrangebyscore(
-            key, cutoff_ms, "+inf"
-        )
+        members: list[bytes | str] = await self._r.zrangebyscore(key, cutoff_ms, "+inf")
         if not members:
             return 1.0, 0
         total = 0

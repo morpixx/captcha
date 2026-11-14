@@ -4,6 +4,7 @@ Public API never returns HTTP 4xx/5xx for business failures — 2captcha clients
 expect HTTP 200 with `errorId != 0`. We keep the FastAPI validation exception
 handler returning JSON in the same shape.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -17,35 +18,43 @@ from fastapi.responses import ORJSONResponse
 
 # (errorId, errorCode, errorDescription)
 ERR_NO_SLOT: tuple[int, str, str] = (
-    2, "ERROR_NO_SLOT_AVAILABLE",
+    2,
+    "ERROR_NO_SLOT_AVAILABLE",
     "No empty slots available on the server. Try again later.",
 )
 ERR_ZERO_BALANCE: tuple[int, str, str] = (
-    10, "ERROR_ZERO_BALANCE",
+    10,
+    "ERROR_ZERO_BALANCE",
     "Account has zero or negative balance",
 )
 ERR_KEY_MISSING: tuple[int, str, str] = (
-    1, "ERROR_KEY_DOES_NOT_EXIST",
+    1,
+    "ERROR_KEY_DOES_NOT_EXIST",
     "Account authorization key not found",
 )
 ERR_WRONG_USER_KEY: tuple[int, str, str] = (
-    1, "ERROR_WRONG_USER_KEY",
+    1,
+    "ERROR_WRONG_USER_KEY",
     "Account authorization key is invalid",
 )
 ERR_TASK_NOT_FOUND: tuple[int, str, str] = (
-    16, "ERROR_TASK_NOT_FOUND",
+    16,
+    "ERROR_TASK_NOT_FOUND",
     "Task with the given id was not found",
 )
 ERR_UNSUPPORTED_TYPE: tuple[int, str, str] = (
-    12, "ERROR_TASK_NOT_SUPPORTED",
+    12,
+    "ERROR_TASK_NOT_SUPPORTED",
     "Captcha type is not supported",
 )
 ERR_BAD_REQUEST: tuple[int, str, str] = (
-    21, "ERROR_BAD_REQUEST",
+    21,
+    "ERROR_BAD_REQUEST",
     "Request malformed or missing required fields",
 )
 ERR_INTERNAL: tuple[int, str, str] = (
-    999, "ERROR_INTERNAL",
+    999,
+    "ERROR_INTERNAL",
     "Internal service error",
 )
 
@@ -88,7 +97,7 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
         if errs:
             loc = ".".join(str(p) for p in errs[0].get("loc", ()) if p != "body")
             first = f"{loc}: {errs[0].get('msg', '')}".strip(": ")
-    except Exception:  # noqa: BLE001
+    except Exception:
         first = ""
     _eid, code, default = ERR_BAD_REQUEST
     body = {

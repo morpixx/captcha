@@ -37,7 +37,7 @@ def setup_tracing(service_name: str, endpoint: str) -> trace.Tracer | None:
     try:
         exporter = OTLPSpanExporter(endpoint=endpoint, insecure=endpoint.startswith("http://"))
         provider.add_span_processor(BatchSpanProcessor(exporter))
-    except Exception:  # noqa: BLE001
+    except Exception:
         _log.exception("otel exporter init failed, tracing disabled")
         return None
 

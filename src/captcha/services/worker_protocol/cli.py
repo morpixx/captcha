@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 
 import structlog
+
 from captcha.config import get_settings
 from captcha.observability import setup_logging, setup_metrics
 
@@ -102,10 +104,8 @@ async def _amain(args: argparse.Namespace) -> int:
         for i in range(args.consumers)
     ]
 
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await asyncio.gather(*(w.run() for w in workers))
-    except asyncio.CancelledError:
-        pass
     return 0
 
 

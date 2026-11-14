@@ -18,8 +18,8 @@ from typing import Any
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -60,7 +60,7 @@ class YidunSolver(InteractiveBase):
         r = await ctx.http.get(ep.GET_CONF, params=get_params)
         try:
             data = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("yidun get not JSON", context={"status": r.status}) from exc
         res = data.get("data") or data.get("result") or {}
         if not res:
@@ -101,7 +101,7 @@ class YidunSolver(InteractiveBase):
         vr = await ctx.http.post(ep.CHECK, data=check_body)
         try:
             vdata = vr.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("yidun check not JSON", context={"status": vr.status}) from exc
         if not vdata.get("result"):
             raise CaptchaError("yidun check rejected", context={"msg": vdata.get("msg"), "error": vdata.get("error")})
@@ -131,6 +131,7 @@ def _encode_answer(cv: SolverResult, kind: CaptchaType) -> str:
     """Produce the plaintext that will then be AES-ECB'd into the `cb` field."""
     import base64
     import json
+
     if kind == CaptchaType.SLIDER:
         obj = {"x": int(cv.offset or 0), "t": int(time.time() * 1000), "s": ""}
     else:

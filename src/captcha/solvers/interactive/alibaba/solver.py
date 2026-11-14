@@ -14,12 +14,11 @@ The site then submits { nc_sid, nc_token, scene } back to its own backend.
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep

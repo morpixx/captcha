@@ -4,6 +4,7 @@ One sessionmaker is built in `build_state()`; `get_db()` just checks it out a
 session per request. The session commits on clean return and rolls back on any
 raised exception — the common route-level pattern.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

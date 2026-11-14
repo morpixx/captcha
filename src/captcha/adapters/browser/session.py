@@ -4,18 +4,21 @@ Holds exactly one context + one page (captcha solves rarely need more). Fingerpr
 behavior packages are imported lazily so this module loads even if they aren't on the
 PYTHONPATH yet — the worker binds them before first use.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from captcha.domain.errors import CaptchaError, ConfigError, TimeoutError as CaptchaTimeout
+from captcha.domain.errors import CaptchaError, ConfigError
+from captcha.domain.errors import TimeoutError as CaptchaTimeout
 
 if TYPE_CHECKING:  # pragma: no cover - types only
-    from captcha.behavior import Humanizer  # type: ignore[import-not-found]
     from captcha.adapters.profiles import Profile  # type: ignore[import-not-found]
+    from captcha.behavior import Humanizer  # type: ignore[import-not-found]
 
 
 @dataclass
@@ -179,7 +182,5 @@ class Session:
                 await self._page.close()
         except Exception:
             pass
-        try:
+        with contextlib.suppress(Exception):
             await self._context.close()
-        except Exception:
-            pass

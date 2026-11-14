@@ -8,7 +8,6 @@ from typing import ClassVar
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import ModelInferenceError, UnsolvableError
 from captcha.solvers import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.detection._yolo import decode_image, load_yolo, predict, resolve_class_ids
 
 
@@ -65,7 +64,7 @@ class ClickSolver(Solver):
                 "confidence": float(confs[idx]),
                 "bbox": [x1, y1, x2, y2],
                 "model": model_name,
-                "n_detections": int(len(confs)),
+                "n_detections": len(confs),
             },
             latency_ms=latency_ms,
         )

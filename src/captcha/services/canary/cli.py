@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import signal
 import sys
@@ -14,7 +15,6 @@ import structlog
 
 from captcha.config import get_settings
 from captcha.observability import setup_logging
-
 from captcha.services.canary.alerts import WebhookAlerter
 from captcha.services.canary.scheduler import CanaryScheduler
 from captcha.services.canary.suite import CanarySuite
@@ -32,14 +32,10 @@ def _parse_args() -> argparse.Namespace:
 
 def _build_suite(args: argparse.Namespace) -> tuple[CanarySuite, WebhookAlerter]:
     settings = get_settings()
-    gateway_url = args.gateway or os.getenv("CAPTCHA_GATEWAY_URL") or (
-        f"http://{settings.gateway_host}:{settings.gateway_port}"
+    gateway_url = (
+        args.gateway or os.getenv("CAPTCHA_GATEWAY_URL") or (f"http://{settings.gateway_host}:{settings.gateway_port}")
     )
-    fixtures_dir = Path(
-        args.fixtures
-        or os.getenv("CANARY_FIXTURES_DIR")
-        or "tests/canary/fixtures"
-    )
+    fixtures_dir = Path(args.fixtures or os.getenv("CANARY_FIXTURES_DIR") or "tests/canary/fixtures")
     pass_threshold = float(os.getenv("CANARY_PASS_THRESHOLD", "0.9"))
     poll_interval = float(os.getenv("CANARY_POLL_INTERVAL_SEC", "5"))
     task_timeout = float(os.getenv("CANARY_TASK_TIMEOUT_SEC", "180"))
@@ -87,7 +83,7 @@ async def _daemon(suite: CanarySuite, alerter: WebhookAlerter, interval_sec: int
     async def job() -> None:
         try:
             await _run_once(suite, alerter)
-        except Exception as exc:  # noqa: BLE001 — scheduler eats raises silently
+        except Exception as exc:
             logger.exception("canary.job.crashed", error=str(exc))
 
     sched = CanaryScheduler(interval_sec=interval_sec, job=job)
@@ -103,10 +99,8 @@ async def _daemon(suite: CanarySuite, alerter: WebhookAlerter, interval_sec: int
 
     # SIGTERM/SIGINT where available; on Windows only SIGINT is deliverable to asyncio loops
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, _on_signal)
-        except NotImplementedError:
-            pass
 
     try:
         await sched.wait_shutdown()

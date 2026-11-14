@@ -8,7 +8,6 @@ triggers in solver.
 
 from __future__ import annotations
 
-import io
 import math
 from pathlib import Path
 from typing import Any
@@ -38,8 +37,8 @@ class AngleRegressor:
         if self._model is not None:
             return
         try:
-            import torch  # noqa: PLC0415
-            from torchvision.models import ResNet50_Weights, resnet50  # noqa: PLC0415
+            import torch
+            from torchvision.models import ResNet50_Weights, resnet50
         except ImportError as e:
             raise ModelInferenceError(
                 "torch/torchvision not installed; rotate ML path unavailable",
@@ -62,7 +61,7 @@ class AngleRegressor:
         try:
             state = torch.load(self.weights_path, map_location=self.device, weights_only=True)
             model.load_state_dict(state)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise ModelInferenceError(
                 "rotate regressor state_dict load failed",
                 context={"path": str(self.weights_path), "error": str(e)},
@@ -77,7 +76,7 @@ class AngleRegressor:
         """Return (angle_deg 0..360, confidence 0..1)."""
         self._load()
         torch = self._torch
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         img = Image.fromarray(rgb, mode="RGB")
         x = self._tv(img).unsqueeze(0).to(self.device)

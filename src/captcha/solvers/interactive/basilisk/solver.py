@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import time
 
-from captcha.domain import CaptchaType, Task, SolverResult
+from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -39,12 +39,10 @@ class BasiliskSolver(InteractiveBase):
         origin: str = task.payload.get("origin") or task.site_url or ""
         start = time.monotonic()
 
-        r = await ctx.http.post(
-            ep.CHALLENGE, json={"siteKey": sitekey, "origin": origin}
-        )
+        r = await ctx.http.post(ep.CHALLENGE, json={"siteKey": sitekey, "origin": origin})
         try:
             data = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("basilisk challenge not JSON", context={"status": r.status}) from exc
         cid = data.get("challengeId")
         img_url = data.get("image")
@@ -55,9 +53,7 @@ class BasiliskSolver(InteractiveBase):
                 context={"keys": sorted(data.keys())},
             )
         img = await ctx.http.get(img_url)
-        cv = await self._solve_cv(
-            CaptchaType.CLICK, task, ctx, {"bg": img.body, "target": target}
-        )
+        cv = await self._solve_cv(CaptchaType.CLICK, task, ctx, {"bg": img.body, "target": target})
         vr = await ctx.http.post(
             ep.VERIFY,
             json={
@@ -69,7 +65,7 @@ class BasiliskSolver(InteractiveBase):
         )
         try:
             vdata = vr.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("basilisk verify not JSON", context={"status": vr.status}) from exc
         token = vdata.get("token") or vdata.get("response")
         if not token:

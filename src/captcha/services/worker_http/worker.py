@@ -28,6 +28,9 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID  # noqa: F401 — type reference for task.id
 
 import structlog
+
+from captcha.adapters.queue import Consumer, TaskStateStore
+from captcha.adapters.queue.keys import Lane
 from captcha.config import Settings
 from captcha.domain.enums import CaptchaType, SolveMode, TaskStatus
 from captcha.domain.errors import (
@@ -38,8 +41,6 @@ from captcha.domain.errors import (
 )
 from captcha.domain.task import SolverResult, Task, TaskEnvelope
 from captcha.observability import metrics
-from captcha.adapters.queue import Consumer, TaskStateStore
-from captcha.adapters.queue.keys import Lane
 from captcha.solvers import Solver, SolverContext, SolverRegistry
 
 from .concurrency import ConcurrencyLimiter
@@ -62,7 +63,7 @@ class Worker:
         self,
         *,
         worker_id: str,
-        redis: "Redis",
+        redis: Redis,
         registry: SolverRegistry,
         state: TaskStateStore,
         bundle: WorkerContextBundle,
@@ -112,7 +113,7 @@ class Worker:
             inst = cls()
             try:
                 await inst.prepare(self._bundle.template)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._log.error(
                     "solver.prepare_failed",
                     solver=key,
@@ -147,7 +148,7 @@ class Worker:
                 batch = await self._consumer.read()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._log.error("consumer.read_failed", error=str(exc), exc_info=True)
                 await asyncio.sleep(0.5)
                 continue
@@ -177,7 +178,7 @@ class Worker:
 
         try:
             await self._state.set_processing(task.id, self._id, started_at=start)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("state.set_processing_failed", error=str(exc))
 
         solver = await self._solver_for(type_)
@@ -195,7 +196,7 @@ class Worker:
 
         try:
             result = await asyncio.wait_for(solver.solve_http(task, ctx), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             err = _timeout_error(timeout, type_.value)
             await self._finalize_failure(msg_id, envelope, err, start, terminal=False, log=log)
             return
@@ -205,7 +206,7 @@ class Worker:
             return
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.error("solver.crashed", error=str(exc), exc_info=True)
             err = CaptchaError(
                 f"solver crashed: {exc}",
@@ -223,7 +224,7 @@ class Worker:
         result = _with_latency(result, latency_ms)
         try:
             await self._state.set_ready(task.id, result, finished_at=time.time())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("state.set_ready_failed", error=str(exc))
         await self._consumer.ack(msg_id)
         await self._stats.record(type_, ok=True)
@@ -267,7 +268,7 @@ class Worker:
         if terminal:
             try:
                 await self._state.set_failed(task.id, err_dict, finished_at=time.time())
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning("state.set_failed_failed", error=str(exc))
             await self._consumer.ack(msg_id)
             metrics.tasks_done_total.labels(
@@ -283,7 +284,7 @@ class Worker:
         if dead:
             try:
                 await self._state.set_failed(task.id, err_dict, finished_at=time.time())
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning("state.set_failed_failed", error=str(exc))
             metrics.tasks_done_total.labels(
                 type=type_val,
@@ -331,6 +332,7 @@ def _task_headers(task: Task) -> dict[str, str] | None:
 def _timeout_error(timeout: float, type_val: str) -> CaptchaError:
     # Use the common.errors.TimeoutError, not builtins.
     from captcha.domain.errors import TimeoutError as CaptchaTimeoutError
+
     return CaptchaTimeoutError(
         f"solver exceeded {timeout:.1f}s",
         context={"timeout_s": timeout, "type": type_val},
@@ -344,6 +346,7 @@ def _with_latency(result: SolverResult, latency_ms: float) -> SolverResult:
     otherwise write ours.
     """
     import msgspec
+
     if result.latency_ms:
         return result
     return msgspec.structs.replace(result, latency_ms=latency_ms)
@@ -356,4 +359,5 @@ def _proxy_for_feedback(proxy_url: str):
     to survive; provider is required by the Struct but unused in the match.
     """
     from captcha.adapters.proxy import Proxy
+
     return Proxy(url=proxy_url, provider="unknown")

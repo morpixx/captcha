@@ -59,14 +59,10 @@ _RECAPTCHA_TYPES: frozenset[CaptchaType] = frozenset(
 )
 
 # hCaptcha reuses the Google key and adds respKey + userAgent.
-_HCAPTCHA_TYPES: frozenset[CaptchaType] = frozenset(
-    {CaptchaType.HCAPTCHA, CaptchaType.HCAPTCHA_ENTERPRISE}
-)
+_HCAPTCHA_TYPES: frozenset[CaptchaType] = frozenset({CaptchaType.HCAPTCHA, CaptchaType.HCAPTCHA_ENTERPRISE})
 
 # Turnstile: {"token", "userAgent"}
-_TURNSTILE_TYPES: frozenset[CaptchaType] = frozenset(
-    {CaptchaType.TURNSTILE, CaptchaType.TURNSTILE_INVISIBLE}
-)
+_TURNSTILE_TYPES: frozenset[CaptchaType] = frozenset({CaptchaType.TURNSTILE, CaptchaType.TURNSTILE_INVISIBLE})
 
 # Plain token with an optional UA: Arkose, MTCaptcha, Prosopo, Yidun, Binance, VK,
 # Yandex SmartCaptcha, CaptchaFox, Cutcaptcha, KeyCaptcha, Capy, Lemin, atbCAPTCHA,

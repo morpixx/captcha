@@ -23,8 +23,8 @@ from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -61,7 +61,7 @@ class MTCaptchaSolver(InteractiveBase):
         r = await ctx.http.get(ep.GET_CHALLENGE, params=params)
         try:
             data = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("mtcaptcha getchallenge returned non-JSON", context={"status": r.status}) from exc
 
         result = data.get("result") or {}
@@ -102,7 +102,7 @@ class MTCaptchaSolver(InteractiveBase):
         vr = await ctx.http.post(ep.SUBMIT_CHALLENGE, json=submit_body)
         try:
             vdata = vr.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("mtcaptcha submit returned non-JSON", context={"status": vr.status}) from exc
 
         verify = (vdata.get("result") or {}).get("verifyResult") or {}

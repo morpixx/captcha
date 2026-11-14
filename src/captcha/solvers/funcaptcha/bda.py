@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 import structlog
+
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import AntibotEngine, SolveMode
 from captcha.domain.errors import (
@@ -77,7 +78,7 @@ async def build_bda_payload(*, task: Task, ctx: SolverContext, host: str, pk: st
     # 2. pick fingerprint
     try:
         fingerprint = ctx.fingerprint_store.pick({"browser": "chrome"})
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise CaptchaError(
             "no chrome fingerprint available for arkose shim",
             context={"err": str(exc)},
@@ -103,7 +104,7 @@ async def build_bda_payload(*, task: Task, ctx: SolverContext, host: str, pk: st
         # the loader hit a missing shim symbol or a timing probe. The
         # runbook captures what to patch next.
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise JSRuntimeError(
             "arkose loader exec failed",
             context={"url": api_js_url, "err": str(exc)},

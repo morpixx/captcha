@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from captcha.adapters.storage import Task
 from captcha.adapters.storage.engine import async_session
-
 from captcha.services.pipeline.s3client import S3Writer
 
 logger = structlog.get_logger(__name__)
@@ -84,7 +83,7 @@ class Sampler:
 
     async def run_once(self) -> SampleReport:
         started = time.time()
-        since = datetime.now(timezone.utc) - timedelta(hours=self.window_hours)
+        since = datetime.now(UTC) - timedelta(hours=self.window_hours)
 
         async with async_session() as s:
             target_types = self.types or await _types_in_window(s, since=since, statuses=self.statuses)
@@ -94,7 +93,7 @@ class Sampler:
         for t in target_types:
             try:
                 n = await self.sample_live_traffic(t, self.per_type_limit, since=since)
-            except Exception as exc:  # noqa: BLE001 — don't let one bad type kill the run
+            except Exception as exc:
                 logger.exception("pipeline.sample.type_failed", type=t, error=str(exc))
                 failures[t] = str(exc)
                 continue
@@ -111,7 +110,7 @@ class Sampler:
         since: datetime | None = None,
     ) -> int:
         """Random N tasks of `type_` since `since`, pushed to S3. Returns upload count."""
-        since = since or datetime.now(timezone.utc) - timedelta(hours=self.window_hours)
+        since = since or datetime.now(UTC) - timedelta(hours=self.window_hours)
         limit = max(1, min(n, self.per_type_limit))
 
         async with async_session() as s:
@@ -132,7 +131,7 @@ class Sampler:
         if not rows:
             return 0
 
-        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        day = datetime.now(UTC).strftime("%Y%m%d")
         uploaded = 0
         for t in rows:
             key = f"{self.prefix}/{type_}/{day}/{t.id}.json"

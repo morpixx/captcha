@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def mouse_events_payload(
@@ -22,6 +22,6 @@ def mouse_events_payload(
         raise ValueError(f"path len {len(path)} != timings len {len(timings)}")
 
     out: list[dict] = []
-    for (x, y), t in zip(path, timings):
+    for (x, y), t in zip(path, timings, strict=False):
         out.append({"x": float(x), "y": float(y), "t": int(t), "type": event_type})
     return out

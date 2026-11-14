@@ -1,4 +1,5 @@
 """Route aggregator. `include_routers(app)` wires every router onto the app."""
+
 from __future__ import annotations
 
 from fastapi import FastAPI

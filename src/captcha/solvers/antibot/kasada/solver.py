@@ -14,7 +14,6 @@ from captcha.domain import SolverResult, Task
 from captcha.domain.enums import AntibotEngine, CaptchaType
 from captcha.domain.errors import UnsolvableError
 from captcha.solvers import SolverContext, SolverInfo
-
 from captcha.solvers.antibot._base import AntibotBase
 
 

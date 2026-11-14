@@ -4,6 +4,7 @@ Numbers are in USD and deliberately close to 2captcha's published rates so a
 client can migrate without rewriting their billing. Over/under-charge is
 corrected by the worker on terminal status (refund on failure).
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -17,13 +18,11 @@ COST_TABLE: dict[CaptchaType, Decimal] = {
     # proof-of-work / client verifiers — cheap, CPU-only
     CaptchaType.FRIENDLY: Decimal("0.00030"),
     CaptchaType.ALTCHA: Decimal("0.00030"),
-
     # OCR class
     CaptchaType.TEXT: Decimal("0.00050"),
     CaptchaType.IMAGE_TO_TEXT: Decimal("0.00050"),
     CaptchaType.MATH_IMAGE: Decimal("0.00050"),
     CaptchaType.AUDIO: Decimal("0.00070"),
-
     # grid / geometry
     CaptchaType.CLASSIFICATION_GRID: Decimal("0.00100"),
     CaptchaType.CLICK: Decimal("0.00100"),
@@ -33,7 +32,6 @@ COST_TABLE: dict[CaptchaType, Decimal] = {
     CaptchaType.DRAG_DROP: Decimal("0.00120"),
     CaptchaType.ROTATE: Decimal("0.00080"),
     CaptchaType.SLIDER: Decimal("0.00080"),
-
     # token-grade public captchas
     CaptchaType.RECAPTCHA_V2: Decimal("0.00200"),
     CaptchaType.RECAPTCHA_V2_ENTERPRISE: Decimal("0.00300"),
@@ -61,7 +59,6 @@ COST_TABLE: dict[CaptchaType, Decimal] = {
     CaptchaType.ATBCAPTCHA: Decimal("0.00150"),
     CaptchaType.CUTCAPTCHA: Decimal("0.00150"),
     CaptchaType.CYBERSIARA: Decimal("0.00180"),
-
     # antibot engines — expensive, usually need a sensor + proxy
     CaptchaType.CF_CHALLENGE: Decimal("0.00300"),
     CaptchaType.DATADOME_SLIDER: Decimal("0.00300"),

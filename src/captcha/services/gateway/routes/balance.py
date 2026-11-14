@@ -1,13 +1,14 @@
 """`POST /getBalance` — single-row Postgres read on the account."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import ORJSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from captcha.services.gateway.schemas import GetBalanceRequest, GetBalanceResponse
 from captcha.services.gateway.auth import authenticate
 from captcha.services.gateway.deps import get_db
+from captcha.services.gateway.schemas import GetBalanceRequest, GetBalanceResponse
 
 router = APIRouter(tags=["balance"], default_response_class=ORJSONResponse)
 

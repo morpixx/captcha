@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 import structlog
+
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import AntibotEngine
 from captcha.domain.errors import CaptchaError, SensorError
@@ -77,7 +78,7 @@ class TurnstileInvisibleSolver(Solver):
         # message and surface the inputs the runbook will need to dump.
         try:
             builder = ctx.sensors.get(AntibotEngine.CLOUDFLARE)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise SensorError(
                 "cloudflare sensor builder not available",
                 context={"engine": AntibotEngine.CLOUDFLARE.value, "err": str(exc)},

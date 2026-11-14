@@ -22,10 +22,15 @@ if TYPE_CHECKING:  # heavy deps resolved only when extras installed
 # ---- base64 ----------------------------------------------------------------
 
 
-_B64_PREFIXES = ("data:image/png;base64,", "data:image/jpeg;base64,", "data:image/jpg;base64,", "data:image/webp;base64,")
+_B64_PREFIXES = (
+    "data:image/png;base64,",
+    "data:image/jpeg;base64,",
+    "data:image/jpg;base64,",
+    "data:image/webp;base64,",
+)
 
 
-def decode_base64_image(blob: str) -> "Image.Image":
+def decode_base64_image(blob: str) -> Image.Image:
     """Decode a base64 string (with or without data: URI prefix) into a PIL Image.
 
     Raises UnsolvableError on malformed input — the task payload is broken, no
@@ -60,14 +65,17 @@ def decode_base64_image(blob: str) -> "Image.Image":
 
 # ---- grid slicing ----------------------------------------------------------
 
+#: A tile smaller than this is not a captcha tile, it is a handful of pixels.
+_MIN_TILE_PX = 8
+
 
 def slice_grid(
-    image: "Image.Image",
+    image: Image.Image,
     rows: int,
     cols: int,
     *,
     tile_size: int = 224,
-) -> list["Image.Image"]:
+) -> list[Image.Image]:
     """Split a grid-captcha image into row*col PIL tiles, resized to `tile_size`.
 
     Row-major order: index = r*cols + c.
@@ -78,12 +86,17 @@ def slice_grid(
         # sanity: no real grid captcha has more than 4x4 or 5x5
         raise UnsolvableError("rows/cols too large", context={"rows": rows, "cols": cols})
 
-    from PIL import Image  # noqa: F401 - type hint reference
+    from PIL import Image
 
     w, h = image.size
     tw, th = w // cols, h // rows
-    if tw < 2 or th < 2:
-        raise UnsolvableError("image too small to slice", context={"w": w, "h": h, "rows": rows, "cols": cols})
+    if tw < _MIN_TILE_PX or th < _MIN_TILE_PX:
+        # Below this a tile is a handful of pixels; upscaling it to 224 gives the
+        # model noise, so refuse the task instead of burning inference on it.
+        raise UnsolvableError(
+            "image too small to slice",
+            context={"w": w, "h": h, "rows": rows, "cols": cols, "tile": [tw, th]},
+        )
 
     tiles: list[Image.Image] = []
     for r in range(rows):
@@ -96,7 +109,7 @@ def slice_grid(
     return tiles
 
 
-def tiles_to_batch(tiles: list["Image.Image"], *, device: str = "cpu") -> Any:
+def tiles_to_batch(tiles: list[Image.Image], *, device: str = "cpu") -> Any:
     """Stack PIL tiles into a float32 CHW tensor batch, ImageNet-normalized.
 
     Returns a torch tensor on `device`. Importing torch here keeps the module
@@ -118,9 +131,9 @@ def tiles_to_batch(tiles: list["Image.Image"], *, device: str = "cpu") -> Any:
     arrs: list[np.ndarray] = []
     for t in tiles:
         a = np.asarray(t, dtype=np.float32) / 255.0  # HWC
-        a = a.transpose(2, 0, 1)                      # CHW
+        a = a.transpose(2, 0, 1)  # CHW
         arrs.append(a)
-    batch = np.stack(arrs, axis=0)                    # NCHW
+    batch = np.stack(arrs, axis=0)  # NCHW
     batch = (batch - mean) / std
     return torch.from_numpy(batch).to(device)
 
@@ -132,7 +145,7 @@ _CLIP_SINGLETON: dict[str, Any] = {}
 
 
 def select_targets_by_prompt(
-    tiles: list["Image.Image"],
+    tiles: list[Image.Image],
     prompt: str,
     *,
     threshold: float = 0.22,

@@ -1,26 +1,26 @@
 """CLI entry.
 
-  python -m captcha.services.pipeline.cli                 # daemon, all jobs
-  python -m captcha.services.pipeline.cli --once sample   # one sample run, exit
-  python -m captcha.services.pipeline.cli --once drift    # one drift scan, exit
-  python -m captcha.services.pipeline.cli --once retrain --type turnstile --reason manual
-  python -m captcha.services.pipeline.cli --once all      # one of each, in order
+python -m captcha.services.pipeline.cli                 # daemon, all jobs
+python -m captcha.services.pipeline.cli --once sample   # one sample run, exit
+python -m captcha.services.pipeline.cli --once drift    # one drift scan, exit
+python -m captcha.services.pipeline.cli --once retrain --type turnstile --reason manual
+python -m captcha.services.pipeline.cli --once all      # one of each, in order
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import signal
 import sys
 
 import structlog
 
-from captcha.config import get_settings
 from captcha.adapters.storage import init_engine, shutdown_engine
+from captcha.config import get_settings
 from captcha.observability import setup_logging
-
 from captcha.services.pipeline.drift import DriftMonitor
 from captcha.services.pipeline.retrain import RetrainTrigger
 from captcha.services.pipeline.s3client import S3Writer
@@ -91,13 +91,13 @@ async def _daemon(
     async def sample_job() -> None:
         try:
             await _run_sample(sampler)
-        except Exception as exc:  # noqa: BLE001 — scheduler eats raises silently
+        except Exception as exc:
             logger.exception("pipeline.sample.crashed", error=str(exc))
 
     async def drift_job() -> None:
         try:
             await _run_drift(monitor, retrain, auto_retrain=auto_retrain)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("pipeline.drift.crashed", error=str(exc))
 
     sched.add_job("sample", interval_sec=sample_interval, job=sample_job)
@@ -116,11 +116,9 @@ async def _daemon(
         sched.request_stop()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        # Windows can't deliver SIGTERM to an asyncio loop; SIGINT still works.
+        with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, _on_signal)
-        except NotImplementedError:
-            # Windows can't deliver SIGTERM to an asyncio loop; SIGINT works.
-            pass
 
     try:
         await sched.wait_shutdown()

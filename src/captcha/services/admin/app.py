@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, Query, Request
@@ -16,15 +17,16 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from captcha.config import get_settings
 from captcha.adapters.storage import SolverRun, Task, init_engine, shutdown_engine
 from captcha.adapters.storage.engine import async_session
+from captcha.config import get_settings
 from captcha.observability import setup_logging
 
 logger = structlog.get_logger(__name__)
 
 
 # ---------- template + static resolution ----------
+
 
 def _pkg_dir() -> Path:
     # importlib.resources.files() → the installed package directory, works both
@@ -42,6 +44,7 @@ def _static_dir() -> Path:
 
 # ---------- lifespan ----------
 
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -57,6 +60,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 # ---------- aggregates ----------
 
+
 async def _type_stats(session: AsyncSession, *, since: datetime) -> list[dict[str, Any]]:
     """Per-type counts + latency. One query, DB does the maths."""
     ready = func.sum(case((Task.status == "ready", 1), else_=0))
@@ -64,9 +68,7 @@ async def _type_stats(session: AsyncSession, *, since: datetime) -> list[dict[st
     processing = func.sum(case((Task.status == "processing", 1), else_=0))
     pending = func.sum(case((Task.status == "pending", 1), else_=0))
     # latency = finished_at - started_at (seconds), averaged — Postgres only
-    latency_s = func.avg(
-        func.extract("epoch", Task.finished_at) - func.extract("epoch", Task.started_at)
-    )
+    latency_s = func.avg(func.extract("epoch", Task.finished_at) - func.extract("epoch", Task.started_at))
     stmt = (
         select(
             Task.type.label("type"),
@@ -140,9 +142,7 @@ async def _solver_stats(session: AsyncSession, *, since: datetime) -> list[dict[
     return out
 
 
-async def _solver_detail(
-    session: AsyncSession, name: str, *, since: datetime, limit: int = 100
-) -> dict[str, Any]:
+async def _solver_detail(session: AsyncSession, name: str, *, since: datetime, limit: int = 100) -> dict[str, Any]:
     # per-task-type break-down
     ok = func.sum(case((SolverRun.ok.is_(True), 1), else_=0))
     bad = func.sum(case((SolverRun.ok.is_(False), 1), else_=0))
@@ -178,10 +178,7 @@ async def _solver_detail(
     errors = [{"code": r["code"], "n": int(r["n"])} for r in (await session.execute(err_stmt)).mappings().all()]
 
     recent_stmt = (
-        select(SolverRun)
-        .where(SolverRun.solver_name == name)
-        .order_by(SolverRun.started_at.desc())
-        .limit(limit)
+        select(SolverRun).where(SolverRun.solver_name == name).order_by(SolverRun.started_at.desc()).limit(limit)
     )
     recent = [
         {
@@ -234,6 +231,7 @@ async def _recent_tasks(
 
 # ---------- app factory ----------
 
+
 def build_app() -> FastAPI:
     app = FastAPI(
         title="captcha-admin",
@@ -278,18 +276,14 @@ def build_app() -> FastAPI:
         since = _since(window)
         async with async_session() as s:
             rows = await _solver_stats(s, since=since)
-        return templates.TemplateResponse(
-            request, "solvers.html", {"solvers": rows, "window": window}
-        )
+        return templates.TemplateResponse(request, "solvers.html", {"solvers": rows, "window": window})
 
     @app.get("/solvers/{name}", response_class=HTMLResponse)
     async def solver_detail(request: Request, name: str, window: str = "7d") -> HTMLResponse:
         since = _since(window)
         async with async_session() as s:
             data = await _solver_detail(s, name, since=since)
-        return templates.TemplateResponse(
-            request, "solver_detail.html", {"solver": data, "window": window}
-        )
+        return templates.TemplateResponse(request, "solver_detail.html", {"solver": data, "window": window})
 
     @app.get("/tasks", response_class=HTMLResponse)
     async def tasks(
@@ -345,7 +339,7 @@ def build_app() -> FastAPI:
 
 
 def _since(window: str) -> datetime:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     w = window.lower().strip()
     if w.endswith("h"):
         return now - timedelta(hours=_int(w[:-1], 24))

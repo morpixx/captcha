@@ -23,9 +23,7 @@ _PADDLE_HINT = (
     "(pulls paddlepaddle + paddleocr)."
 )
 _TROCR_HINT = (
-    "TrOCR deps missing. Install the engine extra: "
-    "`uv pip install -e solvers/ocr[trocr]` "
-    "(pulls transformers + torch)."
+    "TrOCR deps missing. Install the engine extra: `uv pip install -e solvers/ocr[trocr]` (pulls transformers + torch)."
 )
 
 

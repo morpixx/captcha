@@ -17,8 +17,8 @@ from .streams import Consumer, Producer
 StreamName = str
 
 __all__ = [
-    "Consumer",
     "LANES",
+    "Consumer",
     "Lane",
     "Producer",
     "StreamName",

@@ -13,7 +13,7 @@ Frontend tokens:
 from __future__ import annotations
 
 API_HOST = "captcha-api.yandex.ru"
-CHALLENGE = "https://captcha-api.yandex.ru/captcha.js"            # loader
-PICTURE = "https://captcha-api.yandex.ru/image"                    # image bytes
+CHALLENGE = "https://captcha-api.yandex.ru/captcha.js"  # loader
+PICTURE = "https://captcha-api.yandex.ru/image"  # image bytes
 CHECK = "https://captcha-api.yandex.ru/check"
-VALIDATE = "https://captcha-api.yandex.ru/validate"                # 2nd stage
+VALIDATE = "https://captcha-api.yandex.ru/validate"  # 2nd stage

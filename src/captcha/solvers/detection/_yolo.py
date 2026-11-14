@@ -19,7 +19,6 @@ from PIL import Image
 
 from captcha.domain.errors import ModelInferenceError, UnsolvableError
 
-
 _cache: dict[str, Any] = {}
 _cache_lock = threading.Lock()
 
@@ -43,7 +42,7 @@ def load_yolo(models_registry: Any, name: str) -> Any:
             return cached
 
     try:
-        from ultralytics import YOLO  # noqa: PLC0415
+        from ultralytics import YOLO
     except ImportError as e:
         raise ModelInferenceError(
             "ultralytics not installed; install with the [yolo] extra",
@@ -52,7 +51,7 @@ def load_yolo(models_registry: Any, name: str) -> Any:
 
     try:
         weights_path: Path = models_registry.download(name)
-    except Exception as e:  # noqa: BLE001 - registry raises its own typed errors
+    except Exception as e:
         raise ModelInferenceError(
             f"model weights unavailable: {name}",
             context={"model": name, "error": str(e)},
@@ -60,7 +59,7 @@ def load_yolo(models_registry: Any, name: str) -> Any:
 
     try:
         model = YOLO(str(weights_path))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise ModelInferenceError(
             f"YOLO load failed for {name}",
             context={"model": name, "path": str(weights_path), "error": str(e)},
@@ -78,7 +77,7 @@ def decode_image(b64: str) -> np.ndarray:
     try:
         raw = base64.b64decode(b64, validate=False)
         img = Image.open(io.BytesIO(raw)).convert("RGB")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise UnsolvableError("image decode failed", context={"error": str(e)}) from e
     return np.asarray(img, dtype=np.uint8)
 
@@ -101,16 +100,16 @@ def resolve_class_ids(model: Any, target: str | int | list) -> list[int]:
                     seen.add(cid)
                     out.append(cid)
         if not out:
-            raise UnsolvableError("no class in target list matched model vocabulary",
-                                  context={"target": target})
+            raise UnsolvableError("no class in target list matched model vocabulary", context={"target": target})
         return out
 
     names: dict[int, str] = dict(getattr(model, "names", {}) or {})
     if isinstance(target, int):
         if target in names:
             return [target]
-        raise UnsolvableError(f"class id {target} unknown to model",
-                              context={"target": target, "vocab_size": len(names)})
+        raise UnsolvableError(
+            f"class id {target} unknown to model", context={"target": target, "vocab_size": len(names)}
+        )
 
     t = str(target).strip().lower()
     if not t:
@@ -137,7 +136,7 @@ def predict(model: Any, rgb: np.ndarray, *, conf: float = 0.25, classes: list[in
     """Run YOLO .predict in a shape agnostic to version bumps."""
     try:
         results = model.predict(rgb, conf=conf, classes=classes, verbose=False)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise ModelInferenceError(
             "YOLO predict failed",
             context={"error": str(e)},

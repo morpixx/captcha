@@ -19,8 +19,8 @@ from typing import Any
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -54,7 +54,7 @@ class AtbCaptchaSolver(InteractiveBase):
         r = await ctx.http.get(ep.GET_CONF, params=params)
         try:
             data = (r.json() or {}).get("data") or {}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("atbcaptcha get not JSON", context={"status": r.status}) from exc
         token = data.get("token")
         pic = data.get("pic")
@@ -85,7 +85,7 @@ class AtbCaptchaSolver(InteractiveBase):
         vr = await ctx.http.post(ep.VERIFY, json=verify_body)
         try:
             vdata = vr.json() or {}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("atbcaptcha check not JSON", context={"status": vr.status}) from exc
         if not vdata.get("success"):
             raise CaptchaError(
@@ -116,6 +116,7 @@ def _encode_answer(cv: SolverResult, kind: CaptchaType) -> str:
     """Plaintext stub — vendor expects AES-wrap; FILL that in."""
     import base64
     import json
+
     if kind == CaptchaType.SLIDER:
         obj = {"x": int(cv.offset or 0), "t": int(time.time() * 1000)}
     else:

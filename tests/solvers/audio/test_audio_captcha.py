@@ -42,7 +42,7 @@ def _silent_wav() -> str:
 
 def test_bad_base64_raises() -> None:
     solver = AudioCaptchaSolver()
-    task = Task(
+    Task(
         id=new_task_id(),
         type=CaptchaType.AUDIO,
         payload={"body": "!!!not base64!!!", "format": "wav"},

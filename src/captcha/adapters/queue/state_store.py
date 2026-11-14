@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import msgspec
+
 from captcha.domain.enums import TaskStatus
 from captcha.domain.task import SolverResult, Task, TaskEnvelope
 
@@ -150,9 +151,7 @@ class TaskStateStore:
         finished_at: float,
     ) -> None:
         key = self._key(task_id)
-        err_dict: dict[str, Any] = (
-            {"code": "ERR_UNKNOWN", "message": error} if isinstance(error, str) else error
-        )
+        err_dict: dict[str, Any] = {"code": "ERR_UNKNOWN", "message": error} if isinstance(error, str) else error
         mapping: dict[bytes, bytes] = {
             _f_status(): TaskStatus.FAILED.value.encode("utf-8"),
             _f_error(): _dict_encoder.encode(err_dict),
@@ -204,9 +203,7 @@ class TaskStateStore:
         finished_at = _parse_float(_get(raw, _f_finished()))
 
         worker_raw = _get(raw, _f_worker())
-        worker_id = (
-            worker_raw.decode("utf-8") if isinstance(worker_raw, bytes) else worker_raw
-        )
+        worker_id = worker_raw.decode("utf-8") if isinstance(worker_raw, bytes) else worker_raw
 
         retries_raw = _get(raw, _f_retries())
         retries = int(retries_raw) if retries_raw is not None else 0

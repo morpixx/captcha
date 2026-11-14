@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import socket
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -76,7 +76,7 @@ class RetrainTrigger:
         extra: dict[str, Any] | None = None,
     ) -> bool:
         """Returns True iff the marker was written. Webhook failure is logged but not fatal."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stamp = now.strftime("%Y%m%d%H%M")
         safe_type = _safe(type_ or "all")
         key = f"{self.marker_prefix}/{stamp}_{safe_type}.json"

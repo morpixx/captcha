@@ -18,6 +18,7 @@ import json
 from typing import Any, ClassVar
 
 import structlog
+
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import (
@@ -27,7 +28,6 @@ from captcha.domain.errors import (
     UnsolvableError,
 )
 from captcha.solvers import Solver, SolverContext, SolverInfo, register_solver
-
 from captcha.solvers.funcaptcha.bda import build_bda_payload
 
 _log = structlog.get_logger(__name__)
@@ -135,7 +135,7 @@ class _FunCaptchaBase(Solver):
             )
         try:
             return resp.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise SensorError(
                 "funcaptcha session body not JSON — Arkose shape drifted",
                 context={"host": host, "body_head": resp.text[:120]},
@@ -222,7 +222,7 @@ class _FunCaptchaBase(Solver):
         finally:
             try:
                 await solver.shutdown()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _log.warning("rotate_solver.shutdown_failed", error=str(exc))
 
         angle = rotate_result.angle
@@ -236,7 +236,7 @@ class _FunCaptchaBase(Solver):
         answer_payload = {
             "session_token": session.get("session_token") or session.get("token"),
             "game_token": session.get("token"),
-            "guess": json.dumps([{"index": int(round(angle)) % 360}]),
+            "guess": json.dumps([{"index": round(angle) % 360}]),
         }
         answer_resp = await ctx.http.post(
             host + ANSWER_URL,
@@ -254,7 +254,7 @@ class _FunCaptchaBase(Solver):
             )
         try:
             answer = answer_resp.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise SensorError(
                 "funcaptcha answer body not JSON",
                 context={"body_head": answer_resp.text[:120]},

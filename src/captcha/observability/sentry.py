@@ -35,5 +35,5 @@ def setup_sentry(
                 AsyncioIntegration(),
             ],
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         _log.exception("sentry init failed, continuing without")

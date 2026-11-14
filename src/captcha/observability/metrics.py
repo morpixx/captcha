@@ -19,11 +19,30 @@ REGISTRY: Final[CollectorRegistry] = CollectorRegistry(auto_describe=True)
 
 # latency buckets tuned for captcha work: ~50ms OCR up to a browser solve pushing a minute
 _LATENCY_BUCKETS: Final[tuple[float, ...]] = (
-    0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 45.0, 90.0, 180.0,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    20.0,
+    45.0,
+    90.0,
+    180.0,
 )
 # sensor builds are fast — ms territory
 _SENSOR_BUCKETS: Final[tuple[float, ...]] = (
-    0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    5.0,
 )
 
 tasks_created_total: Final[Counter] = Counter(

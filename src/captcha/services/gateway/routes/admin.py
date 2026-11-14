@@ -1,5 +1,5 @@
-"""Admin surface. No auth yet — bind on localhost or front with an nginx auth_request.
-"""
+"""Admin surface. No auth yet — bind on localhost or front with an nginx auth_request."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -39,6 +39,7 @@ async def solvers() -> ORJSONResponse:
     """
     try:
         from captcha.solvers.registry import discover_solvers
+
         reg = discover_solvers()
         rows: list[dict[str, object]] = []
         for cls in reg.all_solvers():
@@ -56,5 +57,5 @@ async def solvers() -> ORJSONResponse:
                 }
             )
         return ORJSONResponse({"solvers": rows, "count": len(rows)})
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return ORJSONResponse({"solvers": [], "count": 0, "error": str(exc)})

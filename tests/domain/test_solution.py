@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from captcha.domain.enums import CaptchaType
-
 from captcha.domain.solution import build_solution
 
 SITE = "https://shop.example.com/checkout"
@@ -22,8 +21,16 @@ def _token(**extra):
 
 def test_all_types_project_something():
     """No type may fall through to an empty solution once a solver returns a value."""
-    probe = {"token": "T", "text": "x", "indices": [1], "coords": [(1.0, 2.0)], "offset": 1.0,
-             "angle": 1.0, "bbox": (1.0, 2.0, 3.0, 4.0), "extra": {"challenge": "c", "validate": "v"}}
+    probe = {
+        "token": "T",
+        "text": "x",
+        "indices": [1],
+        "coords": [(1.0, 2.0)],
+        "offset": 1.0,
+        "angle": 1.0,
+        "bbox": (1.0, 2.0, 3.0, 4.0),
+        "extra": {"challenge": "c", "validate": "v"},
+    }
     for ct in CaptchaType:
         out = build_solution(ct, probe, site_url=SITE)
         assert out, f"{ct.value} produced no solution"

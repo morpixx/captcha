@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import time
 
-from captcha.domain import CaptchaType, Task, SolverResult
+from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -40,7 +40,7 @@ class HuntSolver(InteractiveBase):
         r = await ctx.http.post(host + ep.PATH_INIT, json={}, headers=headers)
         try:
             data = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("hunt init not JSON", context={"status": r.status}) from exc
 
         img_url = data.get("imageUrl") or data.get("image")
@@ -53,9 +53,7 @@ class HuntSolver(InteractiveBase):
             )
 
         img = await ctx.http.get(host + img_url if img_url.startswith("/") else img_url)
-        cv = await self._solve_cv(
-            CaptchaType.CLICK, task, ctx, {"bg": img.body, "target": prompt}
-        )
+        cv = await self._solve_cv(CaptchaType.CLICK, task, ctx, {"bg": img.body, "target": prompt})
 
         vr = await ctx.http.post(
             host + ep.PATH_VERIFY,
@@ -69,7 +67,7 @@ class HuntSolver(InteractiveBase):
         )
         try:
             vdata = vr.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("hunt verify not JSON", context={"status": vr.status}) from exc
         token = vdata.get("token") or vdata.get("response")
         if not token:

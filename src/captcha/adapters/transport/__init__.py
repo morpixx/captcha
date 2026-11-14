@@ -8,9 +8,9 @@ from .response import Response
 from .retry import build_retry_policy
 
 __all__ = [
+    "JA_PROFILES",
     "Client",
     "JA3Profile",
-    "JA_PROFILES",
     "Response",
     "build_retry_policy",
     "pick_impersonate",

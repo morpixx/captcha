@@ -16,7 +16,6 @@ import numpy as np
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import ModelInferenceError, UnsolvableError
 from captcha.solvers import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.detection._yolo import decode_image, load_yolo, predict, resolve_class_ids
 
 
@@ -113,7 +112,7 @@ def _douglas_peucker(poly: np.ndarray, epsilon: float) -> list[tuple[float, floa
         return [(float(x), float(y)) for x, y in poly]
     # Use OpenCV if present — otherwise implement manually.
     try:
-        import cv2  # noqa: PLC0415
+        import cv2
 
         pts = poly.reshape(-1, 1, 2).astype(np.float32)
         simplified = cv2.approxPolyDP(pts, epsilon, closed=True).reshape(-1, 2)
@@ -127,10 +126,7 @@ def _douglas_peucker(poly: np.ndarray, epsilon: float) -> list[tuple[float, floa
         start, end = points[0], points[-1]
         line = end - start
         norm = float(np.linalg.norm(line))
-        if norm == 0.0:
-            d = np.linalg.norm(points - start, axis=1)
-        else:
-            d = np.abs(np.cross(line, points - start) / norm)
+        d = np.linalg.norm(points - start, axis=1) if norm == 0.0 else np.abs(np.cross(line, points - start) / norm)
         i = int(d.argmax())
         if float(d[i]) > epsilon:
             left = _rdp(points[: i + 1])

@@ -11,10 +11,11 @@ from typing import Any, ClassVar
 
 import httpx
 
-from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.config import Settings, get_settings
+from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
-from captcha.domain.errors import ConfigError, ModelInferenceError, TimeoutError as CaptchaTimeout, UnsolvableError
+from captcha.domain.errors import ConfigError, ModelInferenceError, UnsolvableError
+from captcha.domain.errors import TimeoutError as CaptchaTimeout
 from captcha.solvers.base import Solver, SolverContext, SolverInfo
 
 _SYS_PROMPT = (

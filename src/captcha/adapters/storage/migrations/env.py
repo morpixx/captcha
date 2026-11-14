@@ -9,8 +9,8 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from captcha.config import get_settings
 from captcha.adapters.storage.models import Base
+from captcha.config import get_settings
 
 config = context.config
 

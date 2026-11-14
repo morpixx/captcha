@@ -4,9 +4,10 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 import structlog
-from captcha.domain.task import TaskEnvelope
 
 from captcha.domain.lanes import pick_lane
+from captcha.domain.task import TaskEnvelope
+
 from .keys import (
     Lane,
     consumer_group,
@@ -203,7 +204,7 @@ class Consumer:
                         self._dlq,
                         {
                             _FIELD: _extract_payload(fields) if fields else b"",
-                            _REASON_FIELD: f"decode_failed:{exc}".encode("utf-8"),
+                            _REASON_FIELD: f"decode_failed:{exc}".encode(),
                         },
                         maxlen=self._maxlen,
                         approximate=True,

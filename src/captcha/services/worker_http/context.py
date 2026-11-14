@@ -9,19 +9,21 @@ client scoped to its call.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from captcha.config import Settings
-from captcha.domain.errors import ConfigError
+
+from captcha.adapters.jssandbox import LocalRuntime, Runtime, ScriptCache
 from captcha.adapters.profiles import Store as FingerprintStore
+from captcha.adapters.proxy import Pool as ProxyPool
 from captcha.adapters.transport import Client as HTTPClient
 from captcha.adapters.transport import pick_impersonate
-from captcha.adapters.jssandbox import LocalRuntime, Runtime, ScriptCache
 from captcha.adapters.weights import Registry as ModelRegistry
-from captcha.adapters.proxy import Pool as ProxyPool
+from captcha.config import Settings
+from captcha.domain.errors import ConfigError
 from captcha.engines import global_registry as sensor_registry
 from captcha.solvers import SolverContext
 
@@ -44,7 +46,7 @@ class WorkerContextBundle:
     """
 
     settings: Settings
-    redis: "Redis"
+    redis: Redis
     pg: Any  # sqlalchemy AsyncEngine or None
     template: SolverContext
     http_factory: HTTPFactory
@@ -55,7 +57,7 @@ class WorkerContextBundle:
         if self.js_runtime is not None:
             try:
                 await self.js_runtime.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 structlog.get_logger(__name__).warning("js_runtime.close_failed", exc_info=True)
 
 
@@ -68,7 +70,7 @@ def _load_proxy_pool(settings: Settings) -> ProxyPool | None:
         return ProxyPool([])
     try:
         return ProxyPool.load_from_file(path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ConfigError(
             "failed to load proxy pool",
             context={"path": str(path), "error": str(exc)},
@@ -111,7 +113,7 @@ def _make_http_factory(settings: Settings) -> HTTPFactory:
 async def build_context(
     settings: Settings,
     *,
-    redis: "Redis",
+    redis: Redis,
     pg: Any = None,
     logger: Any = None,
 ) -> WorkerContextBundle:

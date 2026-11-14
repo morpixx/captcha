@@ -25,16 +25,17 @@ import uuid
 from typing import TYPE_CHECKING
 
 import structlog
-from captcha.domain import SolverResult, Task, TaskEnvelope
+
+from captcha.adapters.queue import Consumer, TaskStateStore
+from captcha.adapters.queue.keys import Lane
+from captcha.adapters.weights import Registry as ModelRegistry
 from captcha.config import Settings
+from captcha.domain import Task, TaskEnvelope
 from captcha.domain.enums import CaptchaType, SolveMode, TaskStatus
 from captcha.domain.errors import CaptchaError, ConfigError, UnsolvableError
 from captcha.domain.errors import TimeoutError as CaptchaTimeoutError
-from captcha.adapters.weights import Registry as ModelRegistry
-from captcha.observability import metrics
-from captcha.adapters.queue import Consumer, TaskStateStore
 from captcha.domain.lanes import pick_lane
-from captcha.adapters.queue.keys import Lane
+from captcha.observability import metrics
 from captcha.solvers import Solver, SolverContext
 from captcha.solvers.registry import SolverRegistry, discover_solvers, global_registry
 
@@ -72,7 +73,7 @@ class Worker:
         self._max_retries = max_retries
         self._cache_dir = cache_dir
         self._stop = asyncio.Event()
-        self._redis: "Redis | None" = None
+        self._redis: Redis | None = None
         self._consumer: Consumer | None = None
         self._state: TaskStateStore | None = None
         self._registry: SolverRegistry | None = registry
@@ -107,7 +108,7 @@ class Worker:
         self._redis = Redis.from_url(self.settings.redis_url, decode_responses=False)
         try:
             await self._redis.ping()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ConfigError(
                 "redis ping failed",
                 context={"url": self.settings.redis_url, "error": str(exc)},
@@ -161,7 +162,7 @@ class Worker:
                 try:
                     instance = cls()
                     await instance.prepare(self._ctx)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     self._log.error(
                         "solver.prepare_failed",
                         solver=cls.info.name,
@@ -202,10 +203,8 @@ class Worker:
                 loop.add_signal_handler(sig, self._stop.set)
             except (NotImplementedError, RuntimeError):
                 # Windows ProactorEventLoop only wires SIGINT via signal.signal.
-                try:
+                with contextlib.suppress(OSError, ValueError):
                     signal.signal(sig, lambda _s, _f: self._stop.set())
-                except (OSError, ValueError):
-                    pass
 
     # ---- read loop -----------------------------------------------------
 
@@ -216,7 +215,7 @@ class Worker:
                 batch = await self._consumer.read()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._log.error("consumer.read_failed", error=str(exc), exc_info=True)
                 await asyncio.sleep(1.0)
                 continue
@@ -257,7 +256,7 @@ class Worker:
         wall_start = time.time()
         try:
             await self._state.set_processing(task.id, self.worker_id, started_at=wall_start)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._log.warning("state.set_processing_failed", error=str(exc))
 
         solver = self._by_type.get(task.type)
@@ -268,7 +267,7 @@ class Worker:
         timeout = self._resolve_timeout(task)
         try:
             result = await asyncio.wait_for(solver.solve_http(task, self._ctx), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self._handle_failure(
                 message_id,
                 envelope,
@@ -291,7 +290,7 @@ class Worker:
             return
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._log.exception("solver.unknown_error", task_id=str(task.id), type=task.type.value)
             wrapped = CaptchaError(
                 str(exc) or type(exc).__name__,
@@ -306,13 +305,11 @@ class Worker:
         result.solve_mode = solve_mode
         try:
             await self._state.set_ready(task.id, result, finished_at=time.time())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._log.warning("state.set_ready_failed", error=str(exc))
         await self._consumer.ack(message_id)
         metrics.active_tasks.labels(lane=LANE).dec()
-        metrics.task_latency_seconds.labels(
-            type=task.type.value, solve_mode=solve_mode.value
-        ).observe(latency_s)
+        metrics.task_latency_seconds.labels(type=task.type.value, solve_mode=solve_mode.value).observe(latency_s)
         metrics.tasks_done_total.labels(
             type=task.type.value, status=TaskStatus.READY.value, solve_mode=solve_mode.value
         ).inc()
@@ -338,7 +335,7 @@ class Worker:
         self._log.error("solver.missing", task_id=str(task.id), type=task.type.value)
         try:
             await self._state.set_failed(task.id, err.to_dict(), finished_at=time.time())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._log.warning("state.set_failed_failed", error=str(exc))
         await self._consumer.ack(message_id)
         metrics.active_tasks.labels(lane=LANE).dec()
@@ -363,7 +360,7 @@ class Worker:
             await self._consumer.ack(message_id)
             try:
                 await self._state.set_failed(task.id, exc.to_dict(), finished_at=time.time())
-            except Exception as exc2:  # noqa: BLE001
+            except Exception as exc2:
                 self._log.warning("state.set_failed_failed", error=str(exc2))
             metrics.tasks_done_total.labels(
                 type=task.type.value, status=TaskStatus.FAILED.value, solve_mode=solve_mode.value
@@ -380,7 +377,7 @@ class Worker:
             if dead:
                 try:
                     await self._state.set_failed(task.id, exc.to_dict(), finished_at=time.time())
-                except Exception as exc2:  # noqa: BLE001
+                except Exception as exc2:
                     self._log.warning("state.set_failed_failed", error=str(exc2))
                 metrics.tasks_done_total.labels(
                     type=task.type.value,

@@ -16,8 +16,8 @@ from typing import Any
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -65,7 +65,7 @@ class TencentSolver(InteractiveBase):
         payload = _strip_jsonp(r.text)
         try:
             data = _json_loads(payload)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("tencent prehandle not decodable", context={"head": payload[:160]}) from exc
 
         sess = data.get("sess") or data.get("sid")
@@ -96,7 +96,7 @@ class TencentSolver(InteractiveBase):
             "ticket": "",
             "sess": sess,
             "ans": _format_ans(cv, cv_kind),
-            "pow_answer": "",   # FILL: PoW chain from `pow_prefix` + `pow_difficulty`
+            "pow_answer": "",  # FILL: PoW chain from `pow_prefix` + `pow_difficulty`
             "pow_calc_time": 0,
             "eks": data.get("eks", ""),
             "tlg": data.get("tlg", 0),
@@ -110,7 +110,7 @@ class TencentSolver(InteractiveBase):
         vpayload = _strip_jsonp(vr.text)
         try:
             vdata = _json_loads(vpayload)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("tencent verify not decodable", context={"head": vpayload[:160]}) from exc
         if int(vdata.get("errorCode", "1")) != 0:
             raise CaptchaError(
@@ -153,4 +153,5 @@ def _strip_jsonp(text: str) -> str:
 
 def _json_loads(s: str) -> dict[str, Any]:
     import json
+
     return json.loads(s)

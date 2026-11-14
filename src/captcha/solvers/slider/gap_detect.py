@@ -41,7 +41,7 @@ def decode_image(b64: str, *, with_alpha: bool = False) -> np.ndarray:
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise UnsolvableError("could not decode image payload", context={"error": str(e)}) from e
     if with_alpha:
         img = img.convert("RGBA")
@@ -60,7 +60,7 @@ def _piece_mask(piece_rgba: np.ndarray) -> np.ndarray:
     Prefers the alpha channel if non-trivial; falls back to a luminance
     threshold against the solid border colour so JPEG-flattened pieces still work.
     """
-    h, w = piece_rgba.shape[:2]
+    _h, _w = piece_rgba.shape[:2]
     if piece_rgba.shape[2] == 4:
         alpha = piece_rgba[:, :, 3]
         if int(alpha.min()) < 250:

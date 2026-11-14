@@ -37,6 +37,7 @@ def pkcs7_unpad(data: bytes, block_size: int = 16) -> bytes:
 
 # ---- CBC --------------------------------------------------------------
 
+
 def aes_cbc_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
     _check_key(key)
     if len(iv) != 16:
@@ -60,9 +61,8 @@ def aes_cbc_decrypt(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
 
 # ---- GCM --------------------------------------------------------------
 
-def aes_gcm_encrypt(
-    key: bytes, nonce: bytes, plaintext: bytes, *, aad: bytes = b""
-) -> bytes:
+
+def aes_gcm_encrypt(key: bytes, nonce: bytes, plaintext: bytes, *, aad: bytes = b"") -> bytes:
     """Return nonce-less ciphertext || tag(16). Caller tracks the nonce."""
     _check_key(key)
     if len(nonce) != 12:
@@ -70,9 +70,7 @@ def aes_gcm_encrypt(
     return AESGCM(key).encrypt(nonce, plaintext, aad or None)
 
 
-def aes_gcm_decrypt(
-    key: bytes, nonce: bytes, ciphertext_and_tag: bytes, *, aad: bytes = b""
-) -> bytes:
+def aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext_and_tag: bytes, *, aad: bytes = b"") -> bytes:
     _check_key(key)
     if len(nonce) != 12:
         raise CryptoError(f"AES-GCM nonce must be 12 bytes, got {len(nonce)}")
@@ -83,6 +81,7 @@ def aes_gcm_decrypt(
 
 
 # ---- CTR (explicit counter) -------------------------------------------
+
 
 def aes_ctr_xor(key: bytes, nonce_counter: bytes, data: bytes) -> bytes:
     """AES-CTR stream. `nonce_counter` is the full 16-byte initial block.
@@ -99,6 +98,7 @@ def aes_ctr_xor(key: bytes, nonce_counter: bytes, data: bytes) -> bytes:
 
 
 # ---- ECB (rare, only for single-block RE work) ------------------------
+
 
 def aes_ecb_encrypt(key: bytes, plaintext: bytes) -> bytes:
     """ECB with PKCS7. Only exists because RE sometimes needs it."""

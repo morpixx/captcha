@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from captcha.domain import CaptchaType, SolveMode, Task, new_task_id
-
 from captcha.solvers.base import Solver, SolverContext
 
 
@@ -59,7 +58,7 @@ async def run_fixtures(
                         if actual != v:
                             entry["ok"] = False
                             entry.setdefault("mismatches", {})[k] = {"expected": v, "actual": actual}
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 entry["ok"] = False
                 entry["error"] = {"type": type(exc).__name__, "message": str(exc)}
                 entry["latency_ms"] = (time.perf_counter() - started) * 1000

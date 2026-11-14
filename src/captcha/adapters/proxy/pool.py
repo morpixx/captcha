@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import random
 import time
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
-from typing import Awaitable, Callable, Iterable
 
 import httpx
 import msgspec
 import structlog
 
-from captcha.domain.errors import ProxyError
 from captcha.adapters.proxy.proxy import Proxy
+from captcha.domain.errors import ProxyError
 
 
 class PoolError(ProxyError):
@@ -48,7 +48,7 @@ class Pool:
 
     # ------------------------------------------------------------------ load
     @classmethod
-    def load_from_file(cls, path: str | Path, *, cooldown_s: float = 120.0) -> "Pool":
+    def load_from_file(cls, path: str | Path, *, cooldown_s: float = 120.0) -> Pool:
         raw = Path(path).read_bytes()
         try:
             data = msgspec.json.decode(raw)

@@ -23,7 +23,7 @@ class Proxy(msgspec.Struct, frozen=True, kw_only=True):
     password: str | None = None
     tags: dict[str, str] = msgspec.field(default_factory=dict)
 
-    def with_session(self, session_id: str) -> "Proxy":
+    def with_session(self, session_id: str) -> Proxy:
         """Return a copy pinned to a session id. Auth is re-urlencoded."""
         host_port = self.url.split("@")[-1]
         user = self.username or ""

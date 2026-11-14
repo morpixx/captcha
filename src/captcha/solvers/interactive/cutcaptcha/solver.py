@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import time
 
-from captcha.domain import CaptchaType, Task, SolverResult
+from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -42,7 +42,7 @@ class CutCaptchaSolver(InteractiveBase):
         r = await ctx.http.get(ep.GET_CHALLENGE, params={"apikey": apikey, "host": host})
         try:
             data = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("cutcaptcha challenge not JSON", context={"status": r.status}) from exc
         cid = data.get("cid") or data.get("challengeId")
         bg = data.get("bgUrl") or data.get("bg")
@@ -72,7 +72,7 @@ class CutCaptchaSolver(InteractiveBase):
         )
         try:
             vdata = vr.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("cutcaptcha verify not JSON", context={"status": vr.status}) from exc
         token = vdata.get("token") or vdata.get("response")
         if not token:

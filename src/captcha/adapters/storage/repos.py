@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -100,7 +100,7 @@ class TaskRepo:
         worker_id: str | None = None,
     ) -> None:
         values: dict[str, Any] = {"status": status}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if status == "processing":
             values["started_at"] = now
             if worker_id is not None:
@@ -116,7 +116,7 @@ class TaskRepo:
         result: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
     ) -> None:
-        values: dict[str, Any] = {"finished_at": datetime.now(timezone.utc)}
+        values: dict[str, Any] = {"finished_at": datetime.now(UTC)}
         if result is not None:
             values["result"] = result
             values["status"] = "ready"
@@ -136,11 +136,6 @@ class TaskRepo:
         self.s.add(TaskLog(task_id=task_id, event=event, level=level, payload=payload))
 
     async def bump_retry(self, task_id: uuid.UUID) -> int:
-        stmt = (
-            update(Task)
-            .where(Task.id == task_id)
-            .values(retries=Task.retries + 1)
-            .returning(Task.retries)
-        )
+        stmt = update(Task).where(Task.id == task_id).values(retries=Task.retries + 1).returning(Task.retries)
         row = (await self.s.execute(stmt)).first()
         return int(row[0]) if row else 0

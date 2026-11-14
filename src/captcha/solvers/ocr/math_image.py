@@ -10,9 +10,8 @@ from simpleeval import InvalidExpression, NumberTooHigh, SimpleEval
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
-from captcha.domain.errors import ModelInferenceError, UnsolvableError
+from captcha.domain.errors import ModelInferenceError
 from captcha.solvers.base import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.ocr.image_to_text import ImageToTextSolver
 
 # charset normalizer: common OCR confusions in handwritten/distorted math captchas
@@ -45,9 +44,15 @@ _VALID_RE = re.compile(r"^[\d+\-*/().]+$")
 
 
 def _sanitize(raw: str) -> str:
-    cleaned = "".join(_CHAR_MAP.get(ch, ch) for ch in raw)
-    # strip anything that still isn't math
-    cleaned = re.sub(r"[^\d+\-*/().]", "", cleaned)
+    """Normalise OCR noise into a math expression, or return "" if there is none.
+
+    Deliberately strict: a stray letter that is not a known OCR confusion means the
+    model read garbage, and answering with a number made of leftover digits is worse
+    than failing the task. The caller turns "" into ModelInferenceError.
+    """
+    cleaned = "".join(_CHAR_MAP.get(ch, ch) for ch in raw).strip()
+    if not cleaned or not _VALID_RE.match(cleaned):
+        return ""
     return cleaned
 
 
@@ -91,10 +96,7 @@ class MathImageSolver(Solver):
                 context={"expr": expr, "raw": raw},
             ) from e
 
-        if isinstance(value, float) and value.is_integer():
-            text = str(int(value))
-        else:
-            text = str(value)
+        text = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
 
         return SolverResult(
             text=text,

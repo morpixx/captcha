@@ -17,10 +17,7 @@ def load_public_key(key: bytes | str) -> RSAPublicKey:
     if isinstance(key, str):
         key = key.encode()
     try:
-        if key.lstrip().startswith(b"-----BEGIN"):
-            pk = load_pem_public_key(key)
-        else:
-            pk = load_der_public_key(key)
+        pk = load_pem_public_key(key) if key.lstrip().startswith(b"-----BEGIN") else load_der_public_key(key)
     except Exception as e:
         raise CryptoError(f"rsa load failed: {e}") from e
     if not isinstance(pk, RSAPublicKey):

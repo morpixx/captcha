@@ -24,23 +24,23 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar
 
 from captcha.domain import CaptchaType, SolverResult, Task
-from captcha.domain.errors import CaptchaError, TimeoutError as CaptchaTimeout, UnsolvableError
+from captcha.domain.errors import CaptchaError, UnsolvableError
+from captcha.domain.errors import TimeoutError as CaptchaTimeout
 from captcha.solvers import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.pow._hash import leading_zero_bits
 
 log = logging.getLogger(__name__)
 
 # Byte layout of each worker's mining input. One place to edit if the server
 # flips endianness or widens the fields.
-_WORKER_IDX_FMT = "<I"           # u32 little-endian
-_NONCE_FMT = "<Q"                # u64 little-endian
+_WORKER_IDX_FMT = "<I"  # u32 little-endian
+_NONCE_FMT = "<Q"  # u64 little-endian
 _NONCE_MAX = (1 << 64) - 1
-_DEADLINE_CHECK_MASK = 0xFFF     # check wall clock every 4096 hashes
+_DEADLINE_CHECK_MASK = 0xFFF  # check wall clock every 4096 hashes
 
 # Guardrails — a hostile payload shouldn't let us burn the box.
 _MAX_WORKERS = 10_000
-_MAX_DIFFICULTY = 256            # a sha256 digest is 256 bits
+_MAX_DIFFICULTY = 256  # a sha256 digest is 256 bits
 
 
 def _solve_worker(
@@ -61,12 +61,11 @@ def _solve_worker(
         if lzb(digest) >= difficulty:
             return n
         n += 1
-        if (n & _DEADLINE_CHECK_MASK) == 0 and deadline_mono is not None:
-            if time.monotonic() > deadline_mono:
-                raise CaptchaTimeout(
-                    "friendly: deadline exceeded while mining",
-                    context={"worker": worker_idx, "nonce": n, "difficulty": difficulty},
-                )
+        if (n & _DEADLINE_CHECK_MASK) == 0 and deadline_mono is not None and time.monotonic() > deadline_mono:
+            raise CaptchaTimeout(
+                "friendly: deadline exceeded while mining",
+                context={"worker": worker_idx, "nonce": n, "difficulty": difficulty},
+            )
     raise UnsolvableError(
         "friendly: nonce space exhausted",
         context={"worker": worker_idx, "difficulty": difficulty},
@@ -109,8 +108,7 @@ def _parse_puzzle(payload: dict[str, Any]) -> tuple[str, int, int, bytes]:
     elif isinstance(salt, (bytes, bytearray)):
         salt_bytes = bytes(salt)
     else:
-        raise UnsolvableError("friendly: salt_base missing or wrong type",
-                              context={"got": type(salt).__name__})
+        raise UnsolvableError("friendly: salt_base missing or wrong type", context={"got": type(salt).__name__})
     return sig, diff, workers, salt_bytes
 
 
@@ -146,11 +144,11 @@ class FriendlySolver(Solver):
         signature, difficulty, workers, salt_base = _parse_puzzle(task.payload)
 
         if not (0 < workers <= _MAX_WORKERS):
-            raise UnsolvableError("friendly: workers out of range",
-                                  context={"workers": workers, "max": _MAX_WORKERS})
+            raise UnsolvableError("friendly: workers out of range", context={"workers": workers, "max": _MAX_WORKERS})
         if not (0 <= difficulty <= _MAX_DIFFICULTY):
-            raise UnsolvableError("friendly: difficulty out of range",
-                                  context={"difficulty": difficulty, "max": _MAX_DIFFICULTY})
+            raise UnsolvableError(
+                "friendly: difficulty out of range", context={"difficulty": difficulty, "max": _MAX_DIFFICULTY}
+            )
 
         # Lazy pool spin-up for callers who skipped prepare() (tests, canary).
         if self._pool is None:
@@ -165,7 +163,12 @@ class FriendlySolver(Solver):
         loop = asyncio.get_running_loop()
         futures = [
             loop.run_in_executor(
-                self._pool, _solve_worker, salt_base, i, difficulty, mono_deadline,
+                self._pool,
+                _solve_worker,
+                salt_base,
+                i,
+                difficulty,
+                mono_deadline,
             )
             for i in range(workers)
         ]
@@ -173,9 +176,10 @@ class FriendlySolver(Solver):
             nonces = await asyncio.gather(*futures)
         except CaptchaError:
             raise
-        except Exception as exc:  # noqa: BLE001
-            raise CaptchaError("friendly: worker crashed",
-                               context={"error": str(exc), "type": type(exc).__name__}) from exc
+        except Exception as exc:
+            raise CaptchaError(
+                "friendly: worker crashed", context={"error": str(exc), "type": type(exc).__name__}
+            ) from exc
         took_ms = (time.perf_counter() - t0) * 1000.0
 
         solutions = [{"worker": i, "nonce": n} for i, n in enumerate(nonces)]
@@ -190,7 +194,9 @@ class FriendlySolver(Solver):
 
         log.info(
             "friendly solved: difficulty=%d workers=%d took_ms=%.1f",
-            difficulty, workers, took_ms,
+            difficulty,
+            workers,
+            took_ms,
         )
         return SolverResult(
             token=token_b64,
@@ -210,6 +216,5 @@ class FriendlySolver(Solver):
             return None
         budget = deadline_ts - time.time()
         if budget <= 0:
-            raise CaptchaTimeout("friendly: already past deadline",
-                                 context={"deadline_ts": deadline_ts})
+            raise CaptchaTimeout("friendly: already past deadline", context={"deadline_ts": deadline_ts})
         return time.monotonic() + budget

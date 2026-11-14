@@ -13,7 +13,6 @@ from typing import ClassVar
 from captcha.domain import SolverResult, Task
 from captcha.domain.enums import AntibotEngine, CaptchaType
 from captcha.solvers import SolverContext, SolverInfo
-
 from captcha.solvers.antibot._base import AntibotBase
 
 

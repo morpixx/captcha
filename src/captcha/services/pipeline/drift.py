@@ -10,7 +10,7 @@ import os
 import socket
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -96,7 +96,7 @@ class DriftMonitor:
 
     async def run_once(self) -> DriftReport:
         started = time.time()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent_from = now - timedelta(hours=self.window_hours)
         baseline_to = recent_from  # baseline ends where recent starts
         baseline_from = recent_from - timedelta(days=self.baseline_days)

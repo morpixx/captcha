@@ -15,18 +15,25 @@ from typing import Any
 from urllib.parse import urlparse
 
 import structlog
+
 from captcha.domain.errors import ChallengeExpiredError, ProxyError
 
 from .ja_profiles import pick_impersonate
-from .retry import build_retry_policy
 from .response import Response
+from .retry import build_retry_policy
 
 try:
     from curl_cffi.requests import AsyncSession  # type: ignore[import-not-found]
     from curl_cffi.requests.exceptions import (  # type: ignore[import-not-found]
         ConnectionError as _CurlConnectionError,
+    )
+    from curl_cffi.requests.exceptions import (
         ProxyError as _CurlProxyError,
+    )
+    from curl_cffi.requests.exceptions import (
         RequestException as _CurlRequestException,
+    )
+    from curl_cffi.requests.exceptions import (
         Timeout as _CurlTimeout,
     )
 except ImportError:  # pragma: no cover — lets the module import on a dev box without curl_cffi built
@@ -73,8 +80,7 @@ class Client:
     ) -> None:
         if AsyncSession is None:
             raise RuntimeError(
-                "curl_cffi is not importable. `uv sync` the workspace "
-                "or `pip install curl_cffi>=0.7.0`."
+                "curl_cffi is not importable. `uv sync` the workspace or `pip install curl_cffi>=0.7.0`."
             )
 
         self.impersonate = impersonate or pick_impersonate("chrome")
@@ -128,7 +134,7 @@ class Client:
         if self._session is not None:
             try:
                 await self._session.close()
-            except Exception as exc:  # noqa: BLE001 — closing must never raise upward
+            except Exception as exc:
                 _log.warning("client.close_failed", error=str(exc))
             finally:
                 self._session = None

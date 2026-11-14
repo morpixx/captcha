@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import os
 import re
 import tempfile
@@ -11,13 +12,12 @@ import time
 from pathlib import Path
 from typing import ClassVar
 
-from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.config import Settings, get_settings
+from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import ModelInferenceError, UnsolvableError
-from captcha.solvers.base import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.audio._engines import transcribe
+from captcha.solvers.base import Solver, SolverContext, SolverInfo
 
 _SAFE_FMT = re.compile(r"^[a-z0-9]{1,8}$")
 
@@ -83,10 +83,8 @@ class AudioCaptchaSolver(Solver):
             )
         finally:
             if tmp_path is not None:
-                try:
+                with contextlib.suppress(OSError):
                     tmp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
 
         text = text.strip()
         if not text:

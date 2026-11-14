@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import torch
 
 
-_HEAD_CACHE: dict[tuple[str, str, str], "LoRAHead"] = {}
+_HEAD_CACHE: dict[tuple[str, str, str], LoRAHead] = {}
 _HEAD_LOCK = threading.Lock()
 
 
@@ -67,7 +67,7 @@ class LoRAHead:
         backbone: ViTBackbone,
         version: str = "latest",
         device: str = "cpu",
-    ) -> "LoRAHead":
+    ) -> LoRAHead:
         """Resolve a head by registry name; cached per (name, version, device)."""
         try:
             meta = registry.get_meta(name, version)
@@ -107,7 +107,7 @@ class LoRAHead:
             _HEAD_CACHE[key] = inst
             return inst
 
-    def predict(self, features: "torch.Tensor") -> "torch.Tensor":
+    def predict(self, features: torch.Tensor) -> torch.Tensor:
         """Features [N, D] → class logits [N, C]."""
         try:
             import torch  # noqa: F401
@@ -123,7 +123,7 @@ class LoRAHead:
 
     def pick_tiles_for_prompt(
         self,
-        features: "torch.Tensor",
+        features: torch.Tensor,
         prompt: str,
         *,
         threshold: float | None = None,
@@ -154,8 +154,8 @@ class LoRAHead:
                 context={"head": self.name, "version": self.version, "known_labels": self.labels[:32]},
             )
 
-        logits = self.predict(features)                   # [N, C]
-        probs = torch.sigmoid(logits[:, idx])             # [N]
+        logits = self.predict(features)  # [N, C]
+        probs = torch.sigmoid(logits[:, idx])  # [N]
         thr = self.threshold if threshold is None else threshold
         picked = (probs >= thr).nonzero(as_tuple=False).flatten().tolist()
         if not picked:
@@ -197,7 +197,7 @@ def _materialize_head(
 
     try:
         tensors = load_file(str(weights_path), device=device)
-    except Exception as e:  # noqa: BLE001 - safetensors throws typed-but-varied
+    except Exception as e:
         raise ModelInferenceError(
             "failed to load head safetensors",
             context={"path": str(weights_path), "error": str(e)},

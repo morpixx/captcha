@@ -2,6 +2,7 @@
 timeout, and memory ceiling. Used when py-mini-racer can't run the challenge (missing
 WebCrypto surface, bleeding-edge ES features, or scripts over its memory budget).
 """
+
 from __future__ import annotations
 
 from typing import Any

@@ -5,6 +5,7 @@ a `playwright.async_api.Browser`-compatible object. camoufox and patchright expo
 same `async_playwright()` entrypoint as playwright itself, so the downstream Session
 code is backend-agnostic.
 """
+
 from __future__ import annotations
 
 import importlib

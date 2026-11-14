@@ -127,7 +127,7 @@ class AntibotBase(Solver):
             jar = SimpleCookie()
             try:
                 jar.load(raw)
-            except Exception:  # noqa: BLE001 — malformed cookies are common
+            except Exception:
                 continue
             for name, morsel in jar.items():
                 out[name] = morsel.value

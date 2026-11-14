@@ -8,8 +8,8 @@ from .bundles import DEFAULT_BUNDLES, Bundle
 from .store import Store, pick_profile
 
 __all__ = [
-    "Bundle",
     "DEFAULT_BUNDLES",
+    "Bundle",
     "Profile",
     "Store",
     "pick_profile",

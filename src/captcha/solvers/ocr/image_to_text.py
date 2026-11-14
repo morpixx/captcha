@@ -14,7 +14,6 @@ from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import ModelInferenceError, UnsolvableError
 from captcha.solvers.base import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.ocr._engines import paddle_read, trocr_read
 
 

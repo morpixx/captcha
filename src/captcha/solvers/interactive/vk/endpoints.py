@@ -9,7 +9,7 @@ Three variants:
 
 from __future__ import annotations
 
-CAPTCHA_IMAGE = "https://api.vk.com/captcha.php"       # ?sid=...
+CAPTCHA_IMAGE = "https://api.vk.com/captcha.php"  # ?sid=...
 ID_HOST = "https://id.vk.com"
 ID_SLIDER_INIT = "https://id.vk.com/account/api/v1/captcha/init"
 ID_SLIDER_VERIFY = "https://id.vk.com/account/api/v1/captcha/verify"

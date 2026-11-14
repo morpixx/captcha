@@ -72,4 +72,4 @@ def bezier_path(
     xs[0], ys[0] = sx, sy
     xs[-1], ys[-1] = ex, ey
 
-    return list(zip(xs.tolist(), ys.tolist()))
+    return list(zip(xs.tolist(), ys.tolist(), strict=False))

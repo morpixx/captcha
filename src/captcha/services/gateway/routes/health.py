@@ -1,4 +1,5 @@
 """Liveness + readiness. /healthz never touches dependencies; /readyz pings both."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -26,14 +27,14 @@ async def readyz(state: AppState = Depends(get_state)) -> ORJSONResponse:
     try:
         pong = await state.redis.ping()
         ok_redis = bool(pong)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         err["redis"] = str(exc)
 
     try:
         async with state.engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         ok_pg = True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         err["postgres"] = str(exc)
 
     status_code = 200 if (ok_redis and ok_pg) else 503

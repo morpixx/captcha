@@ -2,6 +2,7 @@
 HTTP lane for anything a text-protocol solver might handle, letting the
 worker-side demotion rule do the final mode decision.
 """
+
 from __future__ import annotations
 
 from captcha.domain.enums import SolveMode

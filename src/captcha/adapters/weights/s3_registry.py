@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import io
 import threading
-import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -26,8 +25,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from captcha.domain.errors import ConfigError, ModelInferenceError
 
+from .loaders import load_hf, load_onnx, load_safetensors, load_torch
 from .meta import ModelMeta, decode_meta
-from .loaders import load_torch, load_onnx, load_hf, load_safetensors
 
 log = structlog.get_logger(__name__)
 
@@ -105,9 +104,7 @@ class Registry:
         try:
             obj = self._s3.get_object(Bucket=self.bucket, Key=key)
         except ClientError as e:
-            raise ConfigError(
-                f"'latest' pointer missing for {name}", context={"key": key}
-            ) from e
+            raise ConfigError(f"'latest' pointer missing for {name}", context={"key": key}) from e
         version = obj["Body"].read().decode("utf-8").strip()
         if not version:
             raise ConfigError(f"'latest' pointer is empty for {name}", context={"key": key})
@@ -121,9 +118,7 @@ class Registry:
         try:
             obj = self._s3.get_object(Bucket=self.bucket, Key=key)
         except ClientError as e:
-            raise ConfigError(
-                f"meta.json missing: {name}@{version}", context={"key": key}
-            ) from e
+            raise ConfigError(f"meta.json missing: {name}@{version}", context={"key": key}) from e
 
         meta = decode_meta(obj["Body"].read())
         with self._meta_lock:
@@ -253,7 +248,7 @@ class Registry:
                     for cb in list(self._watch_callbacks):
                         try:
                             cb(meta)
-                        except Exception as e:  # noqa: BLE001 - never kill the thread
+                        except Exception as e:
                             log.error("models.watch.callback_fail", name=name, error=str(e))
             self._watch_stop.wait(interval)
 

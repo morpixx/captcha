@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from captcha.domain.enums import CaptchaType
-from captcha.domain.lanes import LANES, Lane
+from captcha.domain.lanes import Lane
 
 
 def stream_name(prefix: str, lane: Lane) -> str:

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     import torch
 
 
-_BACKBONE_CACHE: dict[tuple[str, str], "ViTBackbone"] = {}
+_BACKBONE_CACHE: dict[tuple[str, str], ViTBackbone] = {}
 _BACKBONE_LOCK = threading.Lock()
 
 
@@ -38,7 +38,7 @@ class ViTBackbone:
         *,
         device: str = "cpu",
         model_name: str = "google/vit-base-patch16-224-in21k",
-    ) -> "ViTBackbone":
+    ) -> ViTBackbone:
         """Return a cached backbone, loading it on first call per (model, device)."""
         key = (model_name, device)
         hit = _BACKBONE_CACHE.get(key)
@@ -60,7 +60,7 @@ class ViTBackbone:
         name: str = "vit-b16-captcha",
         version: str = "latest",
         device: str = "cpu",
-    ) -> "ViTBackbone":
+    ) -> ViTBackbone:
         """Load backbone weights from captcha.adapters.weights.Registry instead of HF."""
         key = (f"registry:{name}:{version}", device)
         hit = _BACKBONE_CACHE.get(key)
@@ -84,7 +84,7 @@ class ViTBackbone:
             return inst
 
     @classmethod
-    def _load_from_hf(cls, *, model_name: str, device: str) -> "ViTBackbone":
+    def _load_from_hf(cls, *, model_name: str, device: str) -> ViTBackbone:
         try:
             import torch  # noqa: F401 - needed for .to()
             from transformers import ViTModel
@@ -96,7 +96,7 @@ class ViTBackbone:
 
         try:
             model = ViTModel.from_pretrained(model_name, add_pooling_layer=False).to(device).eval()
-        except Exception as e:  # noqa: BLE001 - HF throws a zoo
+        except Exception as e:
             raise ConfigError(
                 f"failed to load ViT backbone '{model_name}'",
                 context={"error": str(e)},
@@ -104,7 +104,7 @@ class ViTBackbone:
         feature_dim = int(model.config.hidden_size)
         return cls(model, device=device, feature_dim=feature_dim, model_name=model_name)
 
-    def encode(self, batch: "torch.Tensor") -> "torch.Tensor":
+    def encode(self, batch: torch.Tensor) -> torch.Tensor:
         """Encode NCHW batch → [N, feature_dim] pooled features (CLS token).
 
         `batch` must already be preprocessed (ImageNet-normalized, 224x224).

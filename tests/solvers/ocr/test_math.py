@@ -11,7 +11,6 @@ from captcha.domain.enums import SolveMode
 from captcha.domain.errors import ModelInferenceError
 from captcha.domain.task import Task, new_task_id
 from captcha.solvers.base import SolverContext
-
 from captcha.solvers.ocr.math_image import MathImageSolver, _sanitize
 
 
@@ -26,6 +25,7 @@ def _mk_task() -> Task:
 def _fake_ocr(text: str) -> Any:
     async def _run(_task: Task, _ctx: SolverContext) -> SolverResult:
         return SolverResult(text=text, solve_mode=SolveMode.HTTP, latency_ms=1.0)
+
     return _run
 
 
@@ -60,13 +60,14 @@ def test_math_div_integer_result() -> None:
 
 def test_math_fails_on_garbage() -> None:
     solver = MathImageSolver()
-    with patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("hello world")):
-        with pytest.raises(ModelInferenceError):
-            asyncio.run(solver.solve_http(_mk_task(), SolverContext()))
+    with (
+        patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("hello world")),
+        pytest.raises(ModelInferenceError),
+    ):
+        asyncio.run(solver.solve_http(_mk_task(), SolverContext()))
 
 
 def test_math_empty_ocr_raises() -> None:
     solver = MathImageSolver()
-    with patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("")):
-        with pytest.raises(ModelInferenceError):
-            asyncio.run(solver.solve_http(_mk_task(), SolverContext()))
+    with patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("")), pytest.raises(ModelInferenceError):
+        asyncio.run(solver.solve_http(_mk_task(), SolverContext()))

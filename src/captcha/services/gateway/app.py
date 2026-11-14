@@ -7,6 +7,7 @@
 Each is created in `lifespan` and stashed on `app.state.ctx` as an AppState;
 everything else goes through the dependency in `deps.py`.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -20,14 +21,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from captcha.config import Settings, get_settings
+from captcha.adapters.queue import Producer, TaskStateStore
 from captcha.adapters.storage import init_engine, shutdown_engine
+from captcha.config import Settings, get_settings
+from captcha.observability.logging import setup_logging
 from captcha.services.gateway.errors import validation_error_handler
 from captcha.services.gateway.metrics import build_metrics_app
 from captcha.services.gateway.routes import include_routers
 from captcha.services.gateway.state import AppState
-from captcha.observability.logging import setup_logging
-from captcha.adapters.queue import Producer, TaskStateStore
 
 if TYPE_CHECKING:
     pass
@@ -60,11 +61,11 @@ async def build_state(settings: Settings) -> AppState:
 async def shutdown_state(state: AppState) -> None:
     try:
         await state.redis.aclose()
-    except Exception:  # noqa: BLE001
+    except Exception:
         _log.exception("redis.close_failed")
     try:
         await shutdown_engine()
-    except Exception:  # noqa: BLE001
+    except Exception:
         _log.exception("pg.close_failed")
 
 
@@ -76,8 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state = await build_state(cfg)
         app.state.ctx = state
-        _log.info("gateway.started", redis=cfg.redis_url.split("@")[-1],
-                  pg=cfg.postgres_url.split("@")[-1])
+        _log.info("gateway.started", redis=cfg.redis_url.split("@")[-1], pg=cfg.postgres_url.split("@")[-1])
         try:
             yield
         finally:

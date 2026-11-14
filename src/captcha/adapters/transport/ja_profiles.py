@@ -58,7 +58,7 @@ def pick_impersonate(hint: str, mobile: bool = False) -> str:
     family = h
     for alias, canon in (("ff", "firefox"), ("googlechrome", "chrome"), ("msedge", "edge")):
         if family.startswith(alias):
-            family = canon + family[len(alias):]
+            family = canon + family[len(alias) :]
             break
 
     wants_mobile = mobile or any(tok in h for tok in ("android", "ios", "mobile"))
@@ -67,13 +67,12 @@ def pick_impersonate(hint: str, mobile: bool = False) -> str:
     candidates: list[JA3Profile] = []
     for key, prof in JA_PROFILES.items():
         k = key.lower()
-        if family.startswith("chrome") and k.startswith("chrome"):
-            candidates.append(prof)
-        elif family.startswith("firefox") and k.startswith("firefox"):
-            candidates.append(prof)
-        elif family.startswith("safari") and k.startswith("safari"):
-            candidates.append(prof)
-        elif family.startswith("edge") and k.startswith("edge"):
+        if (
+            (family.startswith("chrome") and k.startswith("chrome"))
+            or (family.startswith("firefox") and k.startswith("firefox"))
+            or (family.startswith("safari") and k.startswith("safari"))
+            or (family.startswith("edge") and k.startswith("edge"))
+        ):
             candidates.append(prof)
 
     if not candidates:
@@ -94,7 +93,7 @@ def pick_impersonate(hint: str, mobile: bool = False) -> str:
         best = min(bucket, key=lambda p: abs((_extract_version(p.name) or 0) - wanted_ver))
         return best.impersonate
 
-    bucket.sort(key=lambda p: (_extract_version(p.name) or 0), reverse=True)
+    bucket.sort(key=lambda p: _extract_version(p.name) or 0, reverse=True)
     return bucket[0].impersonate
 
 

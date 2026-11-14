@@ -15,8 +15,8 @@ from typing import Any
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -46,7 +46,7 @@ class CaptchaFoxSolver(InteractiveBase):
         )
         try:
             data = r.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("captchafox init not JSON", context={"status": r.status}) from exc
 
         challenge_id = data.get("challengeId") or data.get("id")
@@ -81,7 +81,7 @@ class CaptchaFoxSolver(InteractiveBase):
         vr = await ctx.http.post(ep.VERIFY, json=verify_body)
         try:
             vdata = vr.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CaptchaError("captchafox verify not JSON", context={"status": vr.status}) from exc
         token: str | None = vdata.get("token") or vdata.get("response")
         if not token:

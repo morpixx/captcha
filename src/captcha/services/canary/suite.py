@@ -97,7 +97,7 @@ def _percentile(xs: list[float], p: int) -> float:
     if not xs:
         return 0.0
     s = sorted(xs)
-    k = max(0, min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1)))))
+    k = max(0, min(len(s) - 1, round((p / 100.0) * (len(s) - 1))))
     return s[k]
 
 
@@ -127,7 +127,7 @@ class CanarySuite:
         for path in sorted(self.fixtures_dir.glob("*.json")):
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("canary.fixture.parse_failed", path=str(path), error=str(exc))
                 continue
             if "task" not in raw:
@@ -152,9 +152,7 @@ class CanarySuite:
             return SuiteReport(started_at=started_at, finished_at=time.time(), results=[])
 
         results: list[FixtureResult] = []
-        async with httpx.AsyncClient(
-            base_url=self.gateway_url, timeout=self.http_timeout_sec
-        ) as client:
+        async with httpx.AsyncClient(base_url=self.gateway_url, timeout=self.http_timeout_sec) as client:
             # sequential by default — the gateway owns concurrency; canary should be
             # cheap and predictable, not a load test
             for fx in fixtures:
@@ -276,10 +274,7 @@ class CanarySuite:
                 status=last_status,
                 latency_ms=latency_ms,
                 task_id=str(task_id),
-                error=(
-                    f"expected status={expect_status} got={last_status} "
-                    f"errorCode={last_body.get('errorCode')!r}"
-                ),
+                error=(f"expected status={expect_status} got={last_status} errorCode={last_body.get('errorCode')!r}"),
                 expected_keys=expect_keys,
                 solution_keys=solution_keys,
             )

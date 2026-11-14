@@ -6,15 +6,16 @@ interrogator script runs. Each `LocalRuntime` instance owns one MiniRacer contex
 sharing a context across concurrent callers would serialize them under mini-racer's
 internal V8 isolate lock anyway, so Pool N of them if you need parallelism.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import Any, Protocol, runtime_checkable
 
-from captcha.domain.errors import ConfigError, JSRuntimeError
-
 from captcha.adapters.jssandbox.cache import ScriptCache
+from captcha.domain.errors import ConfigError, JSRuntimeError
 
 
 @runtime_checkable
@@ -83,10 +84,9 @@ class LocalRuntime:
         self._max_memory = max_memory_bytes
         self._cache = cache or ScriptCache(capacity=256)
         self._closed = False
-        try:
+        # pragma: no cover - older mini-racer builds lack this limit
+        with contextlib.suppress(Exception):
             self._ctx.set_hard_memory_limit(self._max_memory)
-        except Exception:  # pragma: no cover - older mini-racer lacks this
-            pass
 
     async def exec_script(
         self,

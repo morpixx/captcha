@@ -2,6 +2,7 @@
 the gateway just mounts the Starlette app and exposes a handful of locals it
 re-increments at the API edge.
 """
+
 from __future__ import annotations
 
 from captcha.observability.metrics import (

@@ -24,6 +24,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 import structlog
+
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import (
@@ -162,10 +163,15 @@ class _RecaptchaV2Base(Solver):
 
         language = task.language or "en"
         co = _co(task.site_url)
-        anchor_size = "invisible" if task.type in (
-            CaptchaType.RECAPTCHA_V2_INVISIBLE,
-            CaptchaType.RECAPTCHA_V2_CALLBACK,
-        ) else self._ANCHOR_SIZE
+        anchor_size = (
+            "invisible"
+            if task.type
+            in (
+                CaptchaType.RECAPTCHA_V2_INVISIBLE,
+                CaptchaType.RECAPTCHA_V2_CALLBACK,
+            )
+            else self._ANCHOR_SIZE
+        )
 
         anchor_params = {
             "ar": "1",
@@ -307,7 +313,7 @@ class _RecaptchaV2Base(Solver):
         finally:
             try:
                 await solver.shutdown()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _log.warning("audio_solver.shutdown_failed", error=str(exc))
         text = (result.text or "").strip()
         return text

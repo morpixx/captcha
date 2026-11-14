@@ -13,6 +13,7 @@ import os
 import sys
 
 import structlog
+
 from captcha.adapters.browser import Pool as BrowserPool
 from captcha.config import get_settings
 from captcha.observability import setup_logging, setup_metrics
@@ -132,7 +133,7 @@ async def _amain(args: argparse.Namespace) -> int:
     finally:
         try:
             await browser.close_all()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("browser.pool.close_failed", error=str(exc))
     return 0
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from captcha.domain.enums import AntibotEngine
 
-from .base import BuildContext, SensorBuilder
 from .akamai.builder import AkamaiSensorBuilder
+from .base import BuildContext, SensorBuilder
 from .botdeflector.builder import BotDeflectorBuilder
 from .botguard.builder import BotGuardBuilder
 from .castle.builder import CastleBuilder
@@ -23,14 +23,14 @@ from .datadome.builder import DataDomeBuilder
 from .imperva.builder import ImpervaBuilder
 from .kasada.builder import KasadaBuilder
 from .perimeterx.builder import PerimeterXBuilder
-from .tspd.builder import TspdBuilder
-from .twitch.builder import TwitchIntegrityBuilder
 from .registry import (
     SensorRegistry,
     get_builder,
     global_registry,
     register_builder,
 )
+from .tspd.builder import TspdBuilder
+from .twitch.builder import TwitchIntegrityBuilder
 
 
 def build_akamai() -> AkamaiSensorBuilder:

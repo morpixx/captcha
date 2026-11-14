@@ -37,7 +37,7 @@ def _make_task(payload: dict) -> Task:
     )
 
 
-async def _solve(solver: FriendlySolver, task: Task) -> "object":
+async def _solve(solver: FriendlySolver, task: Task) -> object:
     ctx = SolverContext()
     await solver.prepare(ctx)
     try:
@@ -90,7 +90,11 @@ def test_friendly_accepts_structured_payload():
     assert token["worker_count"] == 2
     for sol in token["solutions"]:
         bits = _verify_solution(
-            structured, sol["nonce"], sol["worker"], 6, bytes.fromhex(salt_hex),
+            structured,
+            sol["nonce"],
+            sol["worker"],
+            6,
+            bytes.fromhex(salt_hex),
         )
         assert bits >= 6
 

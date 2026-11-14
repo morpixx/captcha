@@ -31,14 +31,14 @@ class SolverContext:
     they take what the worker gives. Makes tests isolate the solver, not the world.
     """
 
-    http: Any = None              # captcha.adapters.transport.Client
-    js_runtime: Any = None        # captcha.adapters.jssandbox.Runtime
-    proxy_pool: Any = None        # captcha.adapters.proxy.Pool
-    fingerprint_store: Any = None # captcha.adapters.profiles.Store
-    models: Any = None            # captcha.adapters.weights.Registry
-    sensors: Any = None           # captcha.engines.Registry
-    browser: Any = None           # captcha.adapters.browser.Pool (fallback only)
-    config: Any = None            # captcha.domain.Settings
+    http: Any = None  # captcha.adapters.transport.Client
+    js_runtime: Any = None  # captcha.adapters.jssandbox.Runtime
+    proxy_pool: Any = None  # captcha.adapters.proxy.Pool
+    fingerprint_store: Any = None  # captcha.adapters.profiles.Store
+    models: Any = None  # captcha.adapters.weights.Registry
+    sensors: Any = None  # captcha.engines.Registry
+    browser: Any = None  # captcha.adapters.browser.Pool (fallback only)
+    config: Any = None  # captcha.domain.Settings
     logger: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -62,10 +62,10 @@ class Solver(ABC):
     def __init__(self) -> None:
         pass
 
-    async def prepare(self, ctx: SolverContext) -> None:  # noqa: B027 - intentional no-op default
+    async def prepare(self, ctx: SolverContext) -> None:
         """Preload models, warm caches, pre-build sensor templates. Called once."""
 
-    async def shutdown(self) -> None:  # noqa: B027
+    async def shutdown(self) -> None:
         """Release GPU, close sessions. Called once."""
 
     @abstractmethod

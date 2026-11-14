@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import msgspec
 import orjson
 
-from captcha.domain.errors import ConfigError
 from captcha.adapters.profiles.bundles import DEFAULT_BUNDLES
+from captcha.domain.errors import ConfigError
 from captcha.domain.profile import Profile
 
 

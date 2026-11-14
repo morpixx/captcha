@@ -150,6 +150,7 @@ class GridClassifier(Solver):
         if self.info.needs_gpu:
             try:
                 import torch  # local import — torch is optional at import time
+
                 if torch.cuda.is_available():
                     return "cuda"
             except ImportError:

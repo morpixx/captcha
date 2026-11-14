@@ -19,7 +19,6 @@ from PIL import Image
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import ModelInferenceError, UnsolvableError
 from captcha.solvers import Solver, SolverContext, SolverInfo
-
 from captcha.solvers.rotate.classical import estimate_angle
 from captcha.solvers.rotate.regressor import AngleRegressor
 
@@ -50,7 +49,7 @@ class RotateSolver(Solver):
         try:
             weights_path = ctx.models.download(_MODEL_NAME)
             self._regressor = AngleRegressor(weights_path, device="cpu")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             if ctx.logger is not None:
                 ctx.logger.info("rotate.regressor.unavailable", error=str(e))
             self._regressor = None
@@ -97,6 +96,6 @@ def _decode_rgb(b64: str) -> np.ndarray:
     try:
         raw = base64.b64decode(b64, validate=False)
         img = Image.open(io.BytesIO(raw)).convert("RGB")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise UnsolvableError("rotate image decode failed", context={"error": str(e)}) from e
     return np.asarray(img, dtype=np.uint8)

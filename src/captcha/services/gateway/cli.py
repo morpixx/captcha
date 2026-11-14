@@ -5,6 +5,7 @@ where uvloop isn't installable. The `--workers` flag only has effect when
 running under a single-process invocation; prod should front with gunicorn
 and set PROMETHEUS_MULTIPROC_DIR.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,11 +28,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="captcha-gateway", description="captcha-solver API gateway")
     p.add_argument("--host", default=cfg.gateway_host, help="bind host (env CAPTCHA_GATEWAY_HOST)")
     p.add_argument("--port", type=int, default=cfg.gateway_port, help="bind port (env CAPTCHA_GATEWAY_PORT)")
-    p.add_argument("--workers", type=int, default=cfg.gateway_workers,
-                   help="uvicorn worker count (ignored when --reload is on)")
+    p.add_argument(
+        "--workers", type=int, default=cfg.gateway_workers, help="uvicorn worker count (ignored when --reload is on)"
+    )
     p.add_argument("--reload", action="store_true", help="dev auto-reload")
-    p.add_argument("--log-level", default=cfg.log_level.lower(),
-                   choices=("debug", "info", "warning", "error", "critical"))
+    p.add_argument(
+        "--log-level", default=cfg.log_level.lower(), choices=("debug", "info", "warning", "error", "critical")
+    )
     return p.parse_args(argv)
 
 

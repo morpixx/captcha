@@ -14,7 +14,6 @@ from typing import Any
 
 from captcha.domain.enums import AntibotEngine
 from captcha.domain.errors import SensorError
-
 from captcha.engines.base import BuildContext, SensorBuilder
 from captcha.engines.registry import register_builder
 

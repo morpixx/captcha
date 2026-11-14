@@ -6,7 +6,6 @@ import logging
 from collections.abc import Iterable
 
 from captcha.domain.enums import CaptchaType
-
 from captcha.solvers.base import Solver, SolverInfo
 
 log = logging.getLogger(__name__)
@@ -87,12 +86,12 @@ def discover_solvers(
                 continue
             reg.register(cls)
             loaded.add(cls.info.name)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("failed to load solver entry_point %s: %s", ep.name, exc)
     for modname in extra_modules:
         try:
             importlib.import_module(modname)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("failed to import extra solver module %s: %s", modname, exc)
     return reg
 

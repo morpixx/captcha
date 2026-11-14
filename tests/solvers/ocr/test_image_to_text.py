@@ -11,7 +11,7 @@ from captcha.domain import CaptchaType
 from captcha.domain.task import Task, new_task_id
 from captcha.solvers.base import SolverContext
 
-paddleocr = pytest.importorskip("paddleocr", reason="paddleocr not installed; skip live OCR test")  # noqa: F841
+paddleocr = pytest.importorskip("paddleocr", reason="paddleocr not installed; skip live OCR test")
 
 from captcha.solvers.ocr.image_to_text import ImageToTextSolver  # noqa: E402
 

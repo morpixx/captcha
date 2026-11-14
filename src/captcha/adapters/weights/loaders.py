@@ -47,9 +47,7 @@ def load_onnx(path: str | Path, *, providers: list[str] | None = None) -> Any:
 
     if providers is None:
         available = set(ort.get_available_providers())
-        providers = [
-            x for x in ("CUDAExecutionProvider", "CPUExecutionProvider") if x in available
-        ]
+        providers = [x for x in ("CUDAExecutionProvider", "CPUExecutionProvider") if x in available]
 
     try:
         return ort.InferenceSession(str(p), providers=providers)

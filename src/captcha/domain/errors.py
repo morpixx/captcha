@@ -23,7 +23,7 @@ class UnsolvableError(CaptchaError):
     code = "ERR_UNSOLVABLE"
 
 
-class TimeoutError(CaptchaError):  # noqa: A001 - shadow builtin on purpose; scoped import
+class TimeoutError(CaptchaError):
     """Solver timed out upstream before result."""
 
     code = "ERR_TIMEOUT"

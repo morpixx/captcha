@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import signal
 import sys
@@ -24,9 +25,9 @@ from typing import Any
 
 import structlog
 
+from captcha.adapters.queue import TaskStateStore
 from captcha.config import get_settings
 from captcha.observability import setup_logging, setup_metrics
-from captcha.adapters.queue import TaskStateStore
 from captcha.solvers import discover_solvers, global_registry
 
 from .concurrency import ConcurrencyLimiter
@@ -40,12 +41,14 @@ def _install_loop_policy() -> str:
     if sys.platform == "win32":
         try:
             import winloop  # type: ignore[import-not-found]
+
             winloop.install()
             return "winloop"
         except ImportError:
             return "asyncio"
     try:
         import uvloop  # type: ignore[import-not-found]
+
         uvloop.install()
         return "uvloop"
     except ImportError:
@@ -133,7 +136,7 @@ async def _amain(args: argparse.Namespace) -> int:
     redis = Redis.from_url(settings.redis_url, decode_responses=False)
     try:
         await redis.ping()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.error("redis.ping_failed", error=str(exc), url=settings.redis_url)
         await redis.aclose()
         return 2
@@ -146,12 +149,13 @@ async def _amain(args: argparse.Namespace) -> int:
     pg: Any = None
     try:
         from captcha.adapters.storage import init_engine
+
         pg = init_engine(
             settings.postgres_url,
             pool_size=settings.postgres_pool_size,
         )
         log.info("pg.engine_ready", pool_size=settings.postgres_pool_size)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("pg.unavailable", error=str(exc))
         pg = None
 
@@ -201,10 +205,9 @@ async def _amain(args: argparse.Namespace) -> int:
             # for non-SIGINT signals; fall back to signal.signal.
             def _handler(signum: int, _frame: Any) -> None:
                 _stop(signal.Signals(signum).name)
-            try:
+
+            with contextlib.suppress(OSError, ValueError):
                 signal.signal(sig, _handler)
-            except (OSError, ValueError):
-                pass
 
     # ---- run ---------------------------------------------------------------
     worker_tasks = [asyncio.create_task(w.run(), name=f"worker-{w._id}") for w in workers]
@@ -220,15 +223,14 @@ async def _amain(args: argparse.Namespace) -> int:
     await asyncio.gather(*(w.shutdown() for w in workers), return_exceptions=True)
 
     await bundle.aclose()
-    try:
+    with contextlib.suppress(Exception):
         await redis.aclose()
-    except Exception:  # noqa: BLE001
-        pass
     if pg is not None:
         try:
             from captcha.adapters.storage import shutdown_engine
+
             await shutdown_engine()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("pg.shutdown_failed", error=str(exc))
 
     log.info("shutdown.done")

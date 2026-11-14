@@ -30,18 +30,12 @@ class Base(DeclarativeBase):
 class Account(Base):
     __tablename__ = "accounts"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     api_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
-    balance: Mapped[Decimal] = mapped_column(
-        Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0"
-    )
+    balance: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
     disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     tasks: Mapped[list[Task]] = relationship(back_populates="account", lazy="raise")
 
@@ -57,9 +51,7 @@ Balance = Account
 class Task(Base):
     __tablename__ = "tasks"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("accounts.id", ondelete="CASCADE"),
@@ -73,9 +65,7 @@ class Task(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    cost: Mapped[Decimal] = mapped_column(
-        Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0"
-    )
+    cost: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
@@ -85,9 +75,7 @@ class Task(Base):
     retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     account: Mapped[Account] = relationship(back_populates="tasks", lazy="raise")
-    logs: Mapped[list[TaskLog]] = relationship(
-        back_populates="task", cascade="all, delete-orphan", lazy="raise"
-    )
+    logs: Mapped[list[TaskLog]] = relationship(back_populates="task", cascade="all, delete-orphan", lazy="raise")
 
     __table_args__ = (
         Index("ix_tasks_account_created", "account_id", "created_at"),
@@ -106,9 +94,7 @@ class TaskLog(Base):
         nullable=False,
         index=True,
     )
-    ts: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     level: Mapped[str] = mapped_column(String(16), nullable=False, default="INFO")
     event: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
@@ -127,9 +113,7 @@ class SolverRun(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     solver_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     task_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -159,11 +143,7 @@ class SensorSchemaVersion(Base):
     engine: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     hash: Mapped[str] = mapped_column(String(128), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
-    __table_args__ = (
-        Index("ux_sensor_schema_engine_version", "engine", "version", unique=True),
-    )
+    __table_args__ = (Index("ux_sensor_schema_engine_version", "engine", "version", unique=True),)

@@ -1,4 +1,5 @@
 """`POST /createTask` and `POST /getTaskResult` — the 2captcha core pair."""
+
 from __future__ import annotations
 
 import time
@@ -11,18 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import ORJSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from captcha.domain.enums import CaptchaType, TaskStatus
-from captcha.domain.errors import CaptchaError
-from captcha.services.gateway.schemas import (
-    CreateTaskRequest,
-    CreateTaskResponse,
-    GetTaskResultRequest,
-    GetTaskResultResponse,
-    status_to_api,
-)
-from captcha.domain.task import Task, TaskEnvelope
 from captcha.adapters.storage import AccountRepo, TaskRepo
 from captcha.adapters.storage.models import Task as DbTask
+from captcha.application.route_task import route_task
+from captcha.domain.enums import CaptchaType, TaskStatus
+from captcha.domain.errors import CaptchaError
+from captcha.domain.pricing import estimate_cost
+from captcha.domain.solution import build_solution, host_for_payload
+from captcha.domain.task import Task, TaskEnvelope
+from captcha.observability.metrics import tasks_created_total
 from captcha.services.gateway.auth import authenticate
 from captcha.services.gateway.deps import get_db, get_state
 from captcha.services.gateway.errors import (
@@ -32,11 +30,14 @@ from captcha.services.gateway.errors import (
     classify,
     envelope,
 )
-from captcha.domain.pricing import estimate_cost
-from captcha.application.route_task import route_task
-from captcha.domain.solution import build_solution, host_for_payload
+from captcha.services.gateway.schemas import (
+    CreateTaskRequest,
+    CreateTaskResponse,
+    GetTaskResultRequest,
+    GetTaskResultResponse,
+    status_to_api,
+)
 from captcha.services.gateway.state import AppState
-from captcha.observability.metrics import tasks_created_total
 
 _log = structlog.get_logger(__name__)
 
@@ -105,12 +106,12 @@ async def create_task(
         # XADD is briefly delayed. set_pending seeds status=PENDING with 24h TTL.
         await state.state_store.set_pending(env)
         await state.producer.publish(env, lane=lane)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # Rollback the charge so the client isn't billed for a dropped task.
         _log.error("enqueue.failed", task_id=str(task_id), error=str(exc))
         try:
             await acc_repo.refund(account.id, cost)
-        except Exception:  # noqa: BLE001
+        except Exception:
             _log.exception("refund.failed", task_id=str(task_id))
         return ORJSONResponse(classify("ERR_CONFIG", "enqueue failed"), status_code=status.HTTP_200_OK)
 
@@ -216,6 +217,5 @@ async def get_task_result_slash(
 async def create_task_wrong_verb() -> ORJSONResponse:
     raise HTTPException(
         status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-        detail={"errorId": 21, "errorCode": "ERROR_BAD_REQUEST",
-                "errorDescription": "Use POST"},
+        detail={"errorId": 21, "errorCode": "ERROR_BAD_REQUEST", "errorDescription": "Use POST"},
     )

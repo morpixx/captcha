@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 import structlog
 from structlog.contextvars import merge_contextvars
+from structlog.dev import ConsoleRenderer
 from structlog.processors import (
     CallsiteParameter,
     CallsiteParameterAdder,
@@ -16,7 +17,6 @@ from structlog.processors import (
     format_exc_info,
 )
 from structlog.stdlib import add_log_level
-from structlog.dev import ConsoleRenderer
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 

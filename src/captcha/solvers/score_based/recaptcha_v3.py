@@ -25,6 +25,7 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import structlog
+
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.errors import CaptchaError, SensorError, UnsolvableError
 from captcha.solvers import Solver, SolverContext, SolverInfo, register_solver

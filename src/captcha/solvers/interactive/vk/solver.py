@@ -8,13 +8,12 @@ Branches on payload["mode"]:
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import register_solver
 from captcha.solvers.base import SolverContext, SolverInfo
+from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
@@ -61,7 +60,7 @@ class VKSolver(InteractiveBase):
             r = await ctx.http.post(ep.ID_SLIDER_INIT, json={"ckey": task.payload["ckey"]})
             try:
                 data = r.json()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise CaptchaError("vk slider init not JSON", context={"status": r.status}) from exc
             bg_url = data.get("bg_url")
             piece_url = data.get("piece_url")
@@ -73,9 +72,7 @@ class VKSolver(InteractiveBase):
                 )
             bg = await ctx.http.get(bg_url)
             piece = await ctx.http.get(piece_url)
-            cv = await self._solve_cv(
-                CaptchaType.SLIDER, task, ctx, {"bg": bg.body, "piece": piece.body}
-            )
+            cv = await self._solve_cv(CaptchaType.SLIDER, task, ctx, {"bg": bg.body, "piece": piece.body})
             vr = await ctx.http.post(
                 ep.ID_SLIDER_VERIFY,
                 json={
@@ -88,7 +85,7 @@ class VKSolver(InteractiveBase):
             )
             try:
                 vdata = vr.json()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise CaptchaError("vk slider verify not JSON", context={"status": vr.status}) from exc
             token = vdata.get("smart_token") or vdata.get("token")
             if not token:

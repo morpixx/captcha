@@ -18,7 +18,6 @@ from typing import Any
 
 from captcha.domain.enums import AntibotEngine
 from captcha.domain.errors import SensorError
-
 from captcha.engines.base import BuildContext, SensorBuilder
 from captcha.engines.registry import register_builder
 
@@ -43,7 +42,7 @@ class PerimeterXBuilder(SensorBuilder):
         vid = ctx.cookies.get("_pxvid") or ctx.extra.get("px_vid")
         signals = self._collect_signals(ctx)
 
-        collector_body = {
+        {
             "appId": app_id,
             "tag": "mobile" if ctx.fingerprint and getattr(ctx.fingerprint, "is_mobile", False) else "web",
             "uuid": vid,

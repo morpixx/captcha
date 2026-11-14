@@ -37,4 +37,4 @@ def build_trajectory(
     end = (start[0] + float(offset), start[1] + y_sign * y_drift)
     pts = bezier_path(start, end, n_points=n_points, jitter=0.6, curvature=0.12, rng=rng)
     ts = humanize_timing(n_points, mean_ms=mean_dt_ms, std_ms=mean_dt_ms * 0.35, rng=rng)
-    return [(float(x), float(y), int(t)) for (x, y), t in zip(pts, ts)]
+    return [(float(x), float(y), int(t)) for (x, y), t in zip(pts, ts, strict=False)]

@@ -14,8 +14,7 @@ _faster_cache: dict[tuple[str, str, str], Any] = {}
 _openai_cache: dict[tuple[str, str], Any] = {}
 
 _FW_HINT = (
-    "faster-whisper is not installed. Install the engine extra: "
-    "`uv pip install -e solvers/audio[faster-whisper]`."
+    "faster-whisper is not installed. Install the engine extra: `uv pip install -e solvers/audio[faster-whisper]`."
 )
 _OW_HINT = (
     "openai-whisper is not installed. Install one of the engine extras: "

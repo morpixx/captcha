@@ -19,8 +19,8 @@ from uuid import uuid4
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import Priority, SolveMode
 from captcha.domain.errors import CaptchaError, UnsolvableError
-from captcha.solvers.registry import global_registry
 from captcha.solvers.base import Solver, SolverContext
+from captcha.solvers.registry import global_registry
 
 
 class InteractiveBase(Solver):
@@ -71,7 +71,7 @@ class InteractiveBase(Solver):
             return await inst.solve_http(sub, ctx)
         except CaptchaError:
             raise
-        except Exception as exc:  # noqa: BLE001 — translate CV crashes to taxonomy
+        except Exception as exc:
             raise CaptchaError(
                 f"{kind.value} CV delegate crashed: {exc}",
                 context={"parent_type": parent.type.value, "delegate": cls.__name__},
