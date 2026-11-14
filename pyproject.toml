@@ -25,7 +25,7 @@ dependencies = [
     "boto3>=1.35",
     "botocore>=1.35",
     # js + crypto
-    "py-mini-racer>=0.12",
+    "mini-racer>=0.12",
     "cryptography>=43.0",
     "pycryptodome>=3.21",
     # data / ml primitives
@@ -81,7 +81,14 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    "E501",    # line length is enforced by the formatter, not the linter
+    "B008",    # FastAPI idiom: Depends()/Query() in a default argument is correct there
+    "B027",    # Solver.prepare/shutdown are documented no-ops, subclasses may skip them
+    "RUF001",  # Cyrillic in strings: error messages and runbook names are ours to pick
+    "RUF002",  # same, in docstrings
+    "RUF003",  # same, in comments
+]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "parents"
@@ -100,6 +107,7 @@ explicit_package_bases = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["src"]
 python_files = ["test_*.py", "*_test.py"]
