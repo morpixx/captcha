@@ -65,3 +65,6 @@ Thumbs.db
 *.pem
 *.key
 proxies.txt
+
+# import-linter (grimp) dependency-graph cache
+.import_linter_cache/

@@ -19,7 +19,8 @@
     "node_modules": true,
     ".ipynb_checkpoints": true,
     "Thumbs.db": true,
-    ".DS_Store": true
+    ".DS_Store": true,
+    ".import_linter_cache": true
   },
   "search.exclude": {
     "**/__pycache__": true,
@@ -38,7 +39,8 @@
     "node_modules": true,
     "uv.lock": true,
     "*.min.js": true,
-    "*.min.css": true
+    "*.min.css": true,
+    ".import_linter_cache": true
   },
   "files.watcherExclude": {
     "**/.git/objects/**": true,
@@ -51,7 +53,8 @@
     "**/htmlcov/**": true,
     "**/.mypy_cache/**": true,
     "**/.ruff_cache/**": true,
-    "**/.pytest_cache/**": true
+    "**/.pytest_cache/**": true,
+    "**/.import_linter_cache/**": true
   },
   "python.analysis.exclude": [
     "**/__pycache__",
@@ -60,7 +63,8 @@
     "data",
     "build",
     "dist",
-    "tests/fixtures"
+    "tests/fixtures",
+    ".import_linter_cache"
   ],
   "python.analysis.extraPaths": [
     "src"
@@ -90,5 +94,20 @@
   },
   "files.eol": "\n",
   "files.trimTrailingWhitespace": true,
-  "files.insertFinalNewline": true
+  "files.insertFinalNewline": true,
+  "workbench.iconTheme": "material-icon-theme",
+  "material-icon-theme.folders.customClones": [
+    {
+      "name": "captcha-orange",
+      "base": "keys",
+      "color": "#FB923C",
+      "lightColor": "#EA580C",
+      "folderNames": [
+        "captcha"
+      ],
+      "rootFolderNames": [
+        "captcha"
+      ]
+    }
+  ]
 }
