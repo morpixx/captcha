@@ -212,9 +212,9 @@ HTTP-first существенно сокращает требования к ж�
 
 ## 7. Стек
 
-- **Backend:** Python 3.12, FastAPI, asyncio, Redis streams, Postgres, Alembic.
+- **Backend:** Python 3.14 (пин в `.python-version`, код совместим с 3.12+), FastAPI, asyncio, Redis streams, Postgres, Alembic.
 - **HTTP stealth:** **curl_cffi** (curl-impersonate binding) — главный клиент, TLS/HTTP/2 fingerprint-имитация. Альтернативы: tls-client, noble_tls, rnet, primp.
-- **JS runtime:** py-mini-racer (v8 sandbox) или Node-сайдкар через IPC для тяжёлых obfuscated скриптов.
+- **JS runtime:** mini-racer (пакет переименован из py-mini-racer; модуль внутри всё ещё `py_mini_racer`) или Node-сайдкар через IPC для тяжёлых obfuscated скриптов.
 - **ML:** PyTorch 2.x, transformers, openai-whisper, ultralytics (YOLOv8), timm (бэкбоны), peft (LoRA).
 - **Browser (fallback):** Playwright + patchright, camoufox, nodriver, rebrowser-patches.
 - **Infra:** Docker, docker-compose (dev), k8s (prod), Helm charts, Terraform под cloud-ресурсы.
@@ -226,7 +226,7 @@ HTTP-first существенно сокращает требования к ж�
 
 ## 8. Процессы (критично при команде)
 
-- **Monorepo** с чёткой доменной структурой: `services/`, `solvers/`, `packages/`, `ml/`, `infra/`.
+- **Одна дистрибуция** с доменной структурой: `src/captcha/{domain,application,adapters,engines,solvers,services}` (см. `architecture.md`).
 - **Общий solver-интерфейс** — любой тип капчи реализуется как плагин с одним методом. Новый тип добавляется без трогания core.
 - **Runbook на каждый тип** — обязательный артефакт, PR не мержится без обновлённого runbook.
 - **Регрессионные тесты на живых кейсах** — автоматический прогон перед релизом + каждые 6 часов в проде.

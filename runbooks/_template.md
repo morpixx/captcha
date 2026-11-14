@@ -49,7 +49,7 @@ Add a mermaid or ASCII sequence diagram if the flow has > 4 hops.
 
 ## 4. Sensor / fingerprint
 
-- Schema module: `packages/sensors/src/captcha_sensors/<engine>.py`.
+- Schema module: `src/captcha/engines/<engine>/builder.py`.
 - Hot fields: `<field1>`, `<field2>`, `<...>`.
 - Freshness cadence: `<daily | weekly | per-release>`; regen command below.
 - Fingerprint store key: `fp:<engine>:<ua_hash>`.
@@ -87,7 +87,7 @@ Run when symptom row in §6 points here (schema drift / weights drift):
 
 ```
 # sensor schema
-python tools/sensor-regen --engine <engine> --out packages/sensors/src/captcha_sensors/<engine>.py
+python tools/sensor-regen --engine <engine> --out src/captcha/engines/<engine>/builder.py
 
 # model weights
 python tools/train-<type> --dataset s3://captcha-datasets/<type>/v<N>/ --out s3://captcha-models/<type>/<N+1>/

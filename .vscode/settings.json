@@ -97,5 +97,54 @@
   "files.insertFinalNewline": true,
   "workbench.iconTheme": "material-icon-theme",
   "python.terminal.activateEnvironment": false,
-  "terminal.integrated.defaultProfile.windows": "PowerShell"
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "material-icon-theme.folders.associations": {
+    "domain": "core",
+    "application": "app",
+    "adapters": "api",
+    "transport": "routes",
+    "engines": "robot",
+    "solvers": "target",
+    "antibot": "robot",
+    "classification": "class",
+    "interactive": "api",
+    "recaptcha": "api",
+    "funcaptcha": "api",
+    "score_based": "target",
+    "pow": "target",
+    "ocr": "images",
+    "detection": "images",
+    "slider": "other",
+    "rotate": "other",
+    "crypto": "keys",
+    "behavior": "global",
+    "observability": "log",
+    "jssandbox": "javascript",
+    "sidecar_node": "node",
+    "profiles": "config",
+    "gateway": "server",
+    "canary": "test",
+    "worker_http": "server",
+    "worker_cv": "server",
+    "worker_protocol": "server",
+    "worker_browser": "server",
+    "runbooks": "docs",
+    "adr": "docs",
+    "playbooks": "docs",
+    "versions": "migrations"
+  },
+  "material-icon-theme.folders.customClones": [
+    {
+      "name": "captcha-orange",
+      "base": "keys",
+      "color": "#FB923C",
+      "lightColor": "#EA580C",
+      "folderNames": [
+        "captcha"
+      ],
+      "rootFolderNames": [
+        "captcha"
+      ]
+    }
+  ]
 }

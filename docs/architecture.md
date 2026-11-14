@@ -131,4 +131,12 @@ GET /getTaskResult
    `GridSolution`, `GeometrySolution`): сейчас это один struct с семью опциональными полями.
 4. `solvers/__init__.py` на явный список импортов вместо entry points (сейчас регистрация
    через `discover_solvers()` по entry points, чтобы не тянуть torch в HTTP-воркер).
-5. `import-linter` контракты + CI (в `pyproject.toml` уже подключён `make imports`).
+## Что уже проверяется
+
+- `make imports` — шесть контрактов `import-linter` в `pyproject.toml`: домен чист,
+  `application` не знает адаптеров, адаптеры не лезут вверх, `engines`/солверы не трогают
+  адаптеры, листовые библиотеки остаются листовыми. Одно исключение задокументировано
+  в контракте (два текстовых солвера читают `Settings` как fallback).
+- `make lint` — ruff чист (305 автофиксов долга уже применены, форматирование гоняется).
+- `make test` — 40 тестов зелёные, 3 тяжёлых пропущены без `--extra cv`.
+- CI (`.github/workflows/ci.yml`) гоняет всё это на Python 3.14.

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # One image for every process. The role is chosen by the compose `command:`,
 # the extras by the build arg (cv pulls torch, browser pulls playwright).
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 ARG EXTRAS=""
 

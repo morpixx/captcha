@@ -28,6 +28,9 @@ POST /getBalance
 
 ## Быстрый старт
 
+Python пинится `.python-version` (3.14) — `uv` поставит его сам, в системный не полезет.
+Активировать venv не нужно: все команды идут через `uv run`.
+
 ```bash
 uv sync --extra dev            # база + тулинг
 cp .env.example .env           # затем руками создать аккаунт в БД (см. docs/workflow.md)
@@ -68,6 +71,15 @@ src/captcha/
 - [docs/implementation-order.md](docs/implementation-order.md) — порядок реализации 62 типов
 - [docs/plan.md](docs/plan.md) — план: роли, сроки, инфра, бюджет
 - [runbooks/](runbooks/) — по файлу на тип/движок
+
+## Проверки
+
+```
+ruff                          clean
+import-linter                 6 contracts kept, 0 broken
+pytest                        40 passed, 3 skipped (тяжёлые требуют --extra cv)
+CI                            .github/workflows/ci.yml, Python 3.14
+```
 
 ## Команды
 

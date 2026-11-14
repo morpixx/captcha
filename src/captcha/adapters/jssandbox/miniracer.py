@@ -76,7 +76,7 @@ class LocalRuntime:
         except ImportError as e:  # pragma: no cover - env check
             raise ConfigError(
                 "py-mini-racer not installed",
-                context={"hint": "uv add py-mini-racer"},
+                context={"hint": "uv add mini-racer"},
             ) from e
         self._MiniRacer = MiniRacer
         self._ctx: Any = MiniRacer()

@@ -97,7 +97,7 @@ ban-relative-imports = "parents"
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 mypy_path = "src"
 packages = ["captcha"]
 strict = false

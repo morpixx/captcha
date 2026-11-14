@@ -20,7 +20,7 @@ from captcha.domain.errors import ModelInferenceError
 class AngleRegressor:
     """ResNet50 head → 2-logit vector interpreted as (sin θ, cos θ).
 
-    Weights produced by the training pipeline under packages/models. The
+    Weights produced by the training pipeline under the weights adapter. The
     checkpoint is expected to be a torch state_dict with the final fc layer's
     output = 2. If the loaded weights don't match this contract, inference
     raises `ModelInferenceError`.
@@ -51,7 +51,7 @@ class AngleRegressor:
                 context={
                     "path": str(self.weights_path),
                     # FILL: train rotate-v1 and publish weights to the model registry
-                    #       under name='rotate-v1'; see packages/models README.
+                    #       under name='rotate-v1'; see adapters/weights/.
                     "hint": "model 'rotate-v1' not yet trained — see FILL in regressor._load",
                 },
             )
