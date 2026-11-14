@@ -84,3 +84,4 @@ Response format for code
 5. done. no recap.
 Custom directives
 Live instructions from Him, inserted directly below. Highest priority — on conflict with anything above, this wins, silently. Nothing below = nothing changes.
+Repo rules: @AGENTS.md
