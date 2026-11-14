@@ -96,18 +96,5 @@
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
   "workbench.iconTheme": "material-icon-theme",
-  "material-icon-theme.folders.customClones": [
-    {
-      "name": "captcha-orange",
-      "base": "keys",
-      "color": "#FB923C",
-      "lightColor": "#EA580C",
-      "folderNames": [
-        "captcha"
-      ],
-      "rootFolderNames": [
-        "captcha"
-      ]
-    }
-  ]
+  "// icon clone": "folder icons are personal: see docs/workflow.md"
 }
