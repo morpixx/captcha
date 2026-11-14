@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: install
+        run: uv sync --extra dev
+
+      - name: lint
+        run: uv run ruff check src tests
+
+      - name: architecture contracts
+        run: uv run lint-imports
+
+      - name: unit tests
+        # cv/browser solver tests need torch/playwright and run in a separate job later
+        run: uv run pytest -q tests/domain tests/solvers/pow

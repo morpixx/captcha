@@ -1,5 +1,14 @@
 name: captcha
 
+x-app: &app
+  build:
+    context: .
+    dockerfile: infra/docker/app.Dockerfile
+    args:
+      EXTRAS: ""
+  restart: unless-stopped
+  env_file: .env
+
 services:
   redis:
     image: redis:7-alpine
@@ -46,11 +55,8 @@ services:
       retries: 10
 
   gateway:
-    build:
-      context: .
-      dockerfile: infra/docker/gateway.Dockerfile
-    restart: unless-stopped
-    env_file: .env
+    <<: *app
+    command: ["python", "-m", "captcha.services.gateway"]
     environment:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
@@ -62,37 +68,31 @@ services:
       minio: {condition: service_healthy}
 
   worker-http:
-    build:
-      context: .
-      dockerfile: infra/docker/worker-http.Dockerfile
-    restart: unless-stopped
-    env_file: .env
+    <<: *app
+    command: ["python", "-m", "captcha.services.worker_http", "--consumers", "8", "--concurrency", "512"]
     environment:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
     depends_on:
       redis: {condition: service_healthy}
       postgres: {condition: service_healthy}
-    deploy:
-      replicas: 1
 
   worker-protocol:
-    build:
-      context: .
-      dockerfile: infra/docker/worker-protocol.Dockerfile
-    restart: unless-stopped
-    env_file: .env
+    <<: *app
+    command: ["python", "-m", "captcha.services.worker_protocol"]
     environment:
       REDIS_URL: redis://redis:6379/0
     depends_on:
       redis: {condition: service_healthy}
 
   worker-cv:
+    <<: *app
     build:
       context: .
-      dockerfile: infra/docker/worker-cv.Dockerfile
-    restart: unless-stopped
-    env_file: .env
+      dockerfile: infra/docker/app.Dockerfile
+      args:
+        EXTRAS: "--extra cv"
+    command: ["python", "-m", "captcha.services.worker_cv"]
     environment:
       REDIS_URL: redis://redis:6379/0
       WORKER_CV_DEVICE: cpu
@@ -100,11 +100,8 @@ services:
       redis: {condition: service_healthy}
 
   admin:
-    build:
-      context: .
-      dockerfile: infra/docker/admin.Dockerfile
-    restart: unless-stopped
-    env_file: .env
+    <<: *app
+    command: ["python", "-m", "captcha.services.admin"]
     environment:
       REDIS_URL: redis://redis:6379/0
       POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha

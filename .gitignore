@@ -10,6 +10,7 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tox/
 .nox/
@@ -17,6 +18,7 @@ htmlcov/
 # uv
 .venv/
 .python-version
+uv.lock
 
 # env
 .env
@@ -24,15 +26,18 @@ htmlcov/
 .env.*.local
 
 # data (large, lives in S3/minio)
-data/datasets/
-data/checkpoints/
-data/fingerprints/
-data/js_challenges/
-data/proxies/
+data/
+models-cache/
 *.pt
 *.pth
 *.onnx
 *.safetensors
+*.wav
+*.mp3
+
+# fixtures: small replay samples are committed, bulk dumps are not
+fixtures/**/bulk/
+fixtures/**/*.zip
 
 # logs
 *.log
@@ -42,8 +47,10 @@ logs/
 .DS_Store
 Thumbs.db
 
-# ide
-.vscode/
+# ide — keep the shared editor config, ignore the rest
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
 .idea/
 *.iml
 *.swp
@@ -51,7 +58,6 @@ Thumbs.db
 
 # jupyter
 .ipynb_checkpoints/
-ml/notebooks/*.ipynb
 
 # docker
 .docker/
