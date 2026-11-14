@@ -129,8 +129,18 @@ GET /getTaskResult
    только в сигнатурах.
 3. `SolverResult` → варианты (`TokenSolution`, `CookieSolution`, `TextSolution`,
    `GridSolution`, `GeometrySolution`): сейчас это один struct с семью опциональными полями.
-4. `solvers/__init__.py` на явный список импортов вместо entry points (сейчас регистрация
-   через `discover_solvers()` по entry points, чтобы не тянуть torch в HTTP-воркер).
+## Регистрация солверов
+
+Явная, без entry points: `solvers/loader.py` держит кортеж `SOLVERS` из 53 записей вида
+`"captcha.solvers.pow.friendly:FriendlySolver"`. Загрузчик импортирует модуль, берёт класс и
+регистрирует в реестре; `register()` идемпотентен, поэтому `@register_solver` в модуле
+не конфликтует с таблицей.
+
+Пропуск модуля не фатален: таблица обходится по одному солверу, `ImportError` (нет cv2 или
+torch) логируется и солвер просто не появляется у этого воркера. Регистрация без
+`--extra cv`: 51 из 53 (падают `slider` и `rotate`). Без солвера тип получает
+`ERR_NO_SOLVER`, а не падение процесса.
+
 ## Что уже проверяется
 
 - `make imports` — шесть контрактов `import-linter` в `pyproject.toml`: домен чист,

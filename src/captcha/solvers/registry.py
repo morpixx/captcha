@@ -28,8 +28,11 @@ class SolverRegistry:
         info = getattr(solver_cls, "info", None)
         if not isinstance(info, SolverInfo):
             raise TypeError(f"{solver_cls.__name__} missing SolverInfo")
-        if info.name in self._by_name:
-            log.warning("solver name collision: %s", info.name)
+        existing = self._by_name.get(info.name)
+        if existing is solver_cls:
+            return  # idempotent: decorator + explicit enrollment both register it
+        if existing is not None:
+            log.warning("solver name collision: %s (%s replaces %s)", info.name, solver_cls, existing)
         self._by_name[info.name] = solver_cls
         for ct in info.types:
             self._by_type.setdefault(ct, []).append(solver_cls)
@@ -67,8 +70,9 @@ def discover_solvers(
     *,
     extra_modules: Iterable[str] = (),
     registry: SolverRegistry | None = None,
+    include_builtin: bool = True,
 ) -> SolverRegistry:
-    """Load all solvers via entry_points, plus any extra dotted modules.
+    """Load built-in solvers, entry_points, and any extra dotted modules.
 
     Returns a fresh registry when one isn't passed; the global registry is populated
     as a side effect of importing solver modules that call `register_solver`.
@@ -88,6 +92,14 @@ def discover_solvers(
             loaded.add(cls.info.name)
         except Exception as exc:
             log.exception("failed to load solver entry_point %s: %s", ep.name, exc)
+    if include_builtin:
+        # Function-level import: the loader imports solver packages, which import
+        # this module. Keeping it local breaks the cycle.
+        from captcha.solvers.loader import load_builtin_solvers
+
+        loaded_modules, skipped = load_builtin_solvers()
+        log.info("builtin solvers: %d modules loaded, %d skipped", loaded_modules, skipped)
+
     for modname in extra_modules:
         try:
             importlib.import_module(modname)

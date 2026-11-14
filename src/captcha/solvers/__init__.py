@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from .base import Solver, SolverContext, SolverInfo
 from .harness import SolverFixture, run_fixtures
-from .registry import SolverRegistry, discover_solvers, register_solver
+from .registry import SolverRegistry, discover_solvers, global_registry, register_solver
 
 __all__ = [
     "Solver",
@@ -21,6 +21,7 @@ __all__ = [
     "SolverInfo",
     "SolverRegistry",
     "discover_solvers",
+    "global_registry",
     "register_solver",
     "run_fixtures",
 ]

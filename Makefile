@@ -3,12 +3,11 @@ SHELL := /usr/bin/env bash
 UV ?= uv
 COMPOSE ?= docker compose
 
-.PHONY: help sync hooks lint fmt fix typecheck test test-cov imports dev dev-full down build canary migrations clean
+.PHONY: help sync lint fmt fix typecheck test test-cov imports dev dev-full down build canary migrations clean
 
 help:
 	@echo "targets:"
 	@echo "  sync         install base deps (add ARGS='--extra cv --extra dev')"
-	@echo "  hooks        enable .githooks (blocks direct pushes to main)"
 	@echo "  lint         ruff check"
 	@echo "  fmt          ruff format"
 	@echo "  fix          ruff check --fix"
@@ -26,10 +25,6 @@ help:
 
 sync:
 	$(UV) sync $(ARGS)
-
-hooks:
-	git config core.hooksPath .githooks
-	@echo "git hooks enabled: .githooks/pre-push blocks direct pushes to main"
 
 lint:
 	$(UV) run ruff check src tests

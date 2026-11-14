@@ -33,7 +33,6 @@ Python пинится `.python-version` (3.14) — `uv` поставит его 
 
 ```bash
 uv sync --extra dev            # база + тулинг
-make hooks                     # включить .githooks (блок прямых пушей в main)
 cp .env.example .env           # затем руками создать аккаунт в БД (см. docs/workflow.md)
 make dev                       # docker compose: gateway + воркеры + redis + postgres + minio
 ```
@@ -66,6 +65,7 @@ src/captcha/
 
 ## Документация
 
+- [AGENTS.md](AGENTS.md) — карта репозитория и правила для ИИ-агентов (и людей)
 - [docs/architecture.md](docs/architecture.md) — слои, дерево, правила, что дальше
 - [docs/protocol.md](docs/protocol.md) — API, коды ошибок, форма решения
 - [docs/workflow.md](docs/workflow.md) — git, GitHub, приватный репо, доступ напарнику
@@ -86,7 +86,6 @@ CI                            .github/workflows/ci.yml, Python 3.14
 
 ```bash
 make sync        # установка (ARGS='--extra cv --extra dev' для полного набора)
-make hooks       # включить git-хуки (pre-push блокирует пуш в main)
 make lint fmt    # ruff
 make typecheck   # mypy
 make test        # pytest
