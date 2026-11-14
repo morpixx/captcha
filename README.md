@@ -33,6 +33,7 @@ Python пинится `.python-version` (3.14) — `uv` поставит его 
 
 ```bash
 uv sync --extra dev            # база + тулинг
+make hooks                     # включить .githooks (блок прямых пушей в main)
 cp .env.example .env           # затем руками создать аккаунт в БД (см. docs/workflow.md)
 make dev                       # docker compose: gateway + воркеры + redis + postgres + minio
 ```
@@ -85,6 +86,7 @@ CI                            .github/workflows/ci.yml, Python 3.14
 
 ```bash
 make sync        # установка (ARGS='--extra cv --extra dev' для полного набора)
+make hooks       # включить git-хуки (pre-push блокирует пуш в main)
 make lint fmt    # ruff
 make typecheck   # mypy
 make test        # pytest

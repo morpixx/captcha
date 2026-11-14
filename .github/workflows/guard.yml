@@ -1,0 +1,27 @@
+name: guard
+
+# Free GitHub plan has no branch protection on private repos, so the closest we
+# get to "main only through PRs" is a job that goes red when someone pushes
+# straight to main. It runs after the fact — the pre-push hook is what stops it
+# beforehand — but it leaves a visible mark in the Actions tab.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  main-only-via-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Was this commit merged through a pull request?
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          count=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq 'length')
+          echo "pull requests associated with $SHA: $count"
+          if [ "$count" = "0" ]; then
+            echo "::error::Direct push to main. Next time: branch + pull request."
+            exit 1
+          fi
