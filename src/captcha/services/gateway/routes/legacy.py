@@ -21,7 +21,7 @@ from fastapi.responses import ORJSONResponse, PlainTextResponse, Response
 from captcha.adapters.storage import AccountRepo, TaskRepo
 from captcha.application.route_task import route_task
 from captcha.domain.enums import CaptchaType, TaskStatus
-from captcha.domain.errors import CaptchaError
+from captcha.domain.errors import CaptchaError, UrlRejectedError
 from captcha.domain.pricing import estimate_cost
 from captcha.domain.redaction import redact_payload
 from captcha.domain.solution import build_solution, host_for_payload
@@ -39,6 +39,7 @@ from captcha.services.gateway.legacy_map import (
 from captcha.services.gateway.quotas import QuotaGuard, QuotaLimits
 from captcha.services.gateway.schemas import status_to_api
 from captcha.services.gateway.state import AppState
+from captcha.services.gateway.url_guard import validate_client_urls
 
 _log = structlog.get_logger(__name__)
 
@@ -147,6 +148,21 @@ async def legacy_in(
     if captcha_type not in state.solver_types:
         _log.info("legacy.unsupported", type=captcha_type.value, known=len(state.solver_types))
         return _error("ERROR_TASK_NOT_SUPPORTED", as_json)
+
+    # SSRF guard before the charge: the flat legacy fields carry the same URLs
+    # the JSON API does (pageurl/surl/api_server/challenge_url).
+    try:
+        validate_client_urls(ireq.payload)
+    except UrlRejectedError as exc:
+        _log.info(
+            "legacy.url_rejected",
+            type=captcha_type.value,
+            field=exc.context.get("field"),
+            host=exc.context.get("host"),
+            address=exc.context.get("address"),
+            account_id=str(account.id),
+        )
+        return _error(ERROR_BAD_PARAMETERS, as_json)
 
     cost = estimate_cost(captcha_type)
     account_repo = AccountRepo(session)

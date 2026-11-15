@@ -7,9 +7,11 @@ host resolves to. Any private, loopback, link-local, ULA, multicast, reserved
 or metadata address rejects the URL, and the same check applies to every
 redirect hop (`ensure_redirect`).
 
-The resolver is injectable, so the tests never touch DNS. Error context carries
-the host and the offending address, never the full URL: a `pageurl` can hold a
-token.
+Two entry points: `ensure_public_url` (shape + every resolved address, the
+fetch-time check) and `ensure_public_url_shape` (shape + IP literals only, no
+DNS, for hot paths that must not block the event loop). The resolver is
+injectable, so the tests never touch DNS. Error context carries the host and the
+offending address, never the full URL: a `pageurl` can hold a token.
 """
 
 from __future__ import annotations
@@ -53,6 +55,85 @@ def ensure_public_url(
     the host's own network: wrong scheme, oversize, non-public address, or a
     host that does not resolve.
     """
+    candidate, host, literal = _shape_check(url, field=field)
+    if literal is not None:
+        _reject_private(literal, host=host, field=field)
+        return candidate
+
+    addresses = _resolve(host, resolver=resolver, field=field)
+    if not addresses:
+        raise UrlRejectedError(
+            "host did not resolve",
+            context={"field": field, "host": host},
+        )
+    for address in addresses:
+        parsed = _as_address(address)
+        if parsed is None:
+            raise UrlRejectedError(
+                "resolver returned a non-address",
+                context={"field": field, "host": host},
+            )
+        _reject_private(parsed, host=host, field=field)
+    return candidate
+
+
+def ensure_public_url_shape(url: str, *, field: str | None = None) -> str:
+    """Every check `ensure_public_url` makes except DNS resolution.
+
+    For hot paths that must not block on a resolver (the gateway create path,
+    the pingback sender) and for test suites that must not touch the network.
+    Shape, scheme, port, denied hostnames and literal private/metadata addresses
+    are still rejected; a *hostname* is taken at face value, so the caller is
+    responsible for the resolved-address check at fetch time. `UrlRejectedError`
+    carries field/host/address, never the URL.
+    """
+    candidate, host, literal = _shape_check(url, field=field)
+    if literal is not None:
+        _reject_private(literal, host=host, field=field)
+    return candidate
+
+
+def ensure_redirect(location: str, *, base: str, resolver: Resolver | None = None, field: str | None = None) -> str:
+    """Validate one redirect hop: resolve `location` against `base`, then check it.
+
+    Call this for every `Location` header before following it; a public URL
+    that redirects to `http://10.0.0.1/` is exactly the hole this closes.
+    """
+    return ensure_public_url(urljoin(base, location), resolver=resolver, field=field)
+
+
+def is_public_ip(address: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True when `address` is globally routable and not a metadata endpoint."""
+    parsed = _as_address(address) if isinstance(address, str) else address
+    if parsed is None:
+        return False
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
+        return is_public_ip(parsed.ipv4_mapped)
+    if (
+        parsed.is_private
+        or parsed.is_loopback
+        or parsed.is_link_local
+        or parsed.is_multicast
+        or parsed.is_reserved
+        or parsed.is_unspecified
+    ):
+        return False
+    # CGNAT (100.64.0.0/10) and the documentation nets carry none of the flags
+    # above on recent Pythons; `is_global` is the reliable last word.
+    return bool(parsed.is_global)
+
+
+def _shape_check(
+    url: str,
+    *,
+    field: str | None,
+) -> tuple[str, str, ipaddress.IPv4Address | ipaddress.IPv6Address | None]:
+    """Scheme/length/control/port/denied-name checks shared by both entry points.
+
+    Returns (candidate, host, literal) where `literal` is the parsed address when
+    the host is an IP literal. No DNS is touched, so this is safe on the event
+    loop and in offline tests.
+    """
     if not isinstance(url, str):
         raise UrlRejectedError("url must be a string", context={"field": field})
     candidate = url.strip()
@@ -91,57 +172,7 @@ def ensure_public_url(
             "host is not allowed",
             context={"field": field, "host": host},
         )
-
-    literal = _as_address(host)
-    if literal is not None:
-        _reject_private(literal, host=host, field=field)
-        return candidate
-
-    addresses = _resolve(host, resolver=resolver, field=field)
-    if not addresses:
-        raise UrlRejectedError(
-            "host did not resolve",
-            context={"field": field, "host": host},
-        )
-    for address in addresses:
-        parsed = _as_address(address)
-        if parsed is None:
-            raise UrlRejectedError(
-                "resolver returned a non-address",
-                context={"field": field, "host": host},
-            )
-        _reject_private(parsed, host=host, field=field)
-    return candidate
-
-
-def ensure_redirect(location: str, *, base: str, resolver: Resolver | None = None, field: str | None = None) -> str:
-    """Validate one redirect hop: resolve `location` against `base`, then check it.
-
-    Call this for every `Location` header before following it; a public URL
-    that redirects to `http://10.0.0.1/` is exactly the hole this closes.
-    """
-    return ensure_public_url(urljoin(base, location), resolver=resolver, field=field)
-
-
-def is_public_ip(address: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """True when `address` is globally routable and not a metadata endpoint."""
-    parsed = _as_address(address) if isinstance(address, str) else address
-    if parsed is None:
-        return False
-    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
-        return is_public_ip(parsed.ipv4_mapped)
-    if (
-        parsed.is_private
-        or parsed.is_loopback
-        or parsed.is_link_local
-        or parsed.is_multicast
-        or parsed.is_reserved
-        or parsed.is_unspecified
-    ):
-        return False
-    # CGNAT (100.64.0.0/10) and the documentation nets carry none of the flags
-    # above on recent Pythons; `is_global` is the reliable last word.
-    return bool(parsed.is_global)
+    return candidate, host, _as_address(host)
 
 
 def _reject_private(address: ipaddress.IPv4Address | ipaddress.IPv6Address, *, host: str, field: str | None) -> None:
@@ -190,6 +221,7 @@ __all__ = [
     "UrlRejectedError",
     "default_resolver",
     "ensure_public_url",
+    "ensure_public_url_shape",
     "ensure_redirect",
     "is_public_ip",
 ]

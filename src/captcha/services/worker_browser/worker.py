@@ -38,6 +38,7 @@ from captcha.config import Settings
 from captcha.domain import TaskEnvelope
 from captcha.domain.enums import CaptchaType
 from captcha.domain.errors import ConfigError
+from captcha.domain.redaction import redact_dsn
 from captcha.engines import global_registry as sensor_registry
 from captcha.observability import metrics
 from captcha.solvers import Solver, SolverContext
@@ -221,7 +222,7 @@ class Worker:
         except Exception as exc:
             raise ConfigError(
                 "redis ping failed",
-                context={"url": self.settings.redis_url, "error": str(exc)},
+                context={"url": redact_dsn(self.settings.redis_url), "error": str(exc)},
             ) from exc
 
     async def _prepare_solvers(self) -> None:

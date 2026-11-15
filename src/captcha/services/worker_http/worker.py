@@ -31,7 +31,7 @@ from uuid import UUID  # noqa: F401 — type reference for task.id
 
 import structlog
 
-from captcha.adapters.pingback import PingbackSender
+from captcha.adapters.pingback import PingbackSender, safe_url
 from captcha.adapters.queue import Consumer, Producer, TaskStateStore
 from captcha.adapters.queue.keys import Lane
 from captcha.adapters.storage.persistence import TaskPersistence
@@ -477,9 +477,10 @@ class Worker:
             delivered = await self._pingback.send(task.callback_url, payload)
         except Exception:
             # The sender is contractually silent, but a callback may never kill the loop.
-            log.exception("task.pingback_crashed", callback_url=task.callback_url)
+            log.exception("task.pingback_crashed", callback=safe_url(task.callback_url))
             return
-        log.info("task.pingback", callback_url=task.callback_url, delivered=delivered)
+        # Host only: a callbackUrl can carry a token in its path or query.
+        log.info("task.pingback", callback=safe_url(task.callback_url), delivered=delivered)
 
     def _compute_timeout(self, task: Task) -> float:
         if task.deadline_ts is None:
