@@ -64,6 +64,9 @@ class CaptchaType(StrEnum):
     KEYCAPTCHA = "keycaptcha"
     LEMIN = "lemin"
     ATBCAPTCHA = "atbcaptcha"
+    # Custom type, outside the 62-vendor taxonomy: order-independent card choice
+    # on a 5/8-card strip plus a hint. See docs/ml-hopscotch.md.
+    HOPSCOTCH = "hopscotch"
 
 
 class AntibotEngine(StrEnum):

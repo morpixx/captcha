@@ -1,0 +1,4 @@
+{"id":"g1","predicted":[0,2],"latency_ms":42}
+{"id":"g2","predicted":[5],"latency_ms":38}
+{"id":"c1","predicted":[[102,198],[505,303]],"latency_ms":55}
+{"id":"h1","predicted":{"index":3,"point":[810,395]},"latency_ms":210}

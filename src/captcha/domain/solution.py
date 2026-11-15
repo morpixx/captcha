@@ -123,6 +123,13 @@ def build_solution(
         _put(sol, "angle", result.get("angle"))
     elif kind is SolutionKind.SLIDER:
         _put(sol, "offset", result.get("offset"))
+    elif kind is SolutionKind.HOPSCOTCH:
+        # Custom type: the solver answers with one 1-based card number and the
+        # foot point (x, y) of that card's figure in input-image pixels. Both
+        # arrive in `extra` because `indices` is the 0-based multi-select grid
+        # contract, and a client that reads the wrong base loses a round.
+        _put(sol, "index", _first(sol, "index"))
+        _put(sol, "coordinates", _first(sol, "coordinates") or result.get("coords"))
     elif kind is SolutionKind.TOKEN:
         _put(sol, "token", token)
         _put(sol, "userAgent", _ua(sol, result))

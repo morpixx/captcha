@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     worker_browser_sessions: int = Field(default=12, alias="WORKER_BROWSER_SESSIONS")
     worker_browser_headless: bool = Field(default=True, alias="WORKER_BROWSER_HEADLESS")
     worker_browser_min_free_mb: int = Field(default=2048, alias="WORKER_BROWSER_MIN_FREE_MB")
+    # per-task hard deadline, contract §4 window is 180–300 s
+    worker_browser_task_timeout_sec: int = Field(default=240, alias="WORKER_BROWSER_TASK_TIMEOUT_SEC")
+    # sessions the worker starts with; it ramps up to worker_browser_sessions
+    worker_browser_ramp_start: int = Field(default=2, alias="WORKER_BROWSER_RAMP_START")
 
     # canary
     canary_interval_sec: int = Field(default=21600, alias="CANARY_INTERVAL_SEC")
