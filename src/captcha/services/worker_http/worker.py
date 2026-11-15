@@ -13,6 +13,8 @@ For each task:
        derived from `task.deadline_ts`
     3. On success: `TaskStateStore.set_ready` + `Consumer.ack` + metric
     4. On `CaptchaError`: route by `.code`
+       - ERR_NEEDS_BROWSER: publish to the `browser` lane, ack the source,
+         count an escalation, leave billing alone (one hop max)
        - ERR_UNSOLVABLE / ERR_CONFIG: terminal, set_failed + ack, no requeue
        - everything else: `Consumer.fail` (ack + re-xadd with retries++ or DLQ)
     5. On other exceptions: classify as ERR_UNKNOWN, fail-with-retry
@@ -30,7 +32,7 @@ from uuid import UUID  # noqa: F401 — type reference for task.id
 import structlog
 
 from captcha.adapters.pingback import PingbackSender
-from captcha.adapters.queue import Consumer, TaskStateStore
+from captcha.adapters.queue import Consumer, Producer, TaskStateStore
 from captcha.adapters.queue.keys import Lane
 from captcha.adapters.storage.persistence import TaskPersistence
 from captcha.application.pingback import pingback_payload
@@ -39,15 +41,17 @@ from captcha.domain.enums import CaptchaType, SolveMode, TaskStatus
 from captcha.domain.errors import (
     CaptchaError,
     ConfigError,
+    NeedsBrowserError,
     ProxyError,
     UnsolvableError,
 )
-from captcha.domain.task import SolverResult, Task, TaskEnvelope
+from captcha.domain.task import MAX_LANE_HOPS, SolverResult, Task, TaskEnvelope
 from captcha.observability import metrics
 from captcha.solvers import Solver, SolverContext, SolverRegistry
 
 from .concurrency import ConcurrencyLimiter
 from .context import WorkerContextBundle
+from .escalation import escalate_to_browser
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -72,6 +76,8 @@ class Worker:
         limiter: ConcurrencyLimiter,
         persistence: TaskPersistence,
         settings: Settings,
+        producer: Producer | None = None,
+        consumer: Consumer | None = None,
         pingback: PingbackSender | None = None,
         consumer_count: int = 16,
         block_ms: int = 5_000,
@@ -88,7 +94,7 @@ class Worker:
         self._pingback = pingback
         self._log = structlog.get_logger("captcha.worker.http").bind(worker=worker_id)
 
-        self._consumer = Consumer(
+        self._consumer = consumer or Consumer(
             redis,
             lane=_LANE,
             consumer_name=worker_id,
@@ -97,6 +103,9 @@ class Worker:
             count=consumer_count,
             max_retries=max_retries,
         )
+        # The HTTP lane needs a producer only for escalation, but it shares the
+        # process-wide lane streams so the prefix must match the consumer.
+        self._producer = producer or Producer(redis, prefix=settings.redis_stream_prefix)
 
         self._instances: dict[str, Solver] = {}
         self._running = asyncio.Event()
@@ -112,7 +121,9 @@ class Worker:
         # marked experimental (never verified against a live site), and there is
         # no non-experimental alternative for those types. Refusing them here
         # would mean 36 registered solvers are unreachable.
-        cls = self._registry.pick(ct, allow_experimental=True)
+        # mode=HTTP: a browser-only solver must never be instantiated here —
+        # its solve_http is the base-class "not supported" error.
+        cls = self._registry.pick(ct, mode=SolveMode.HTTP, allow_experimental=True)
         if cls is None:
             return None
         key = cls.info.name
@@ -211,6 +222,11 @@ class Worker:
                 msg_id, envelope, err, start, terminal=False, log=log, solver_name=solver.info.name
             )
             return
+        except NeedsBrowserError as exc:
+            # Before the generic CaptchaError branch: this one is a reroute,
+            # not a failure. It must never reach set_failed/refund.
+            await self._handle_needs_browser(msg_id, envelope, exc, start, log=log, solver_name=solver.info.name)
+            return
         except CaptchaError as exc:
             terminal = isinstance(exc, (UnsolvableError, ConfigError))
             await self._finalize_failure(
@@ -261,6 +277,48 @@ class Worker:
             solve_mode=result.solve_mode.value,
         ).observe(latency_ms / 1000.0)
         log.info("task.done", latency_ms=round(latency_ms, 1))
+
+    async def _handle_needs_browser(
+        self,
+        msg_id: str,
+        envelope: TaskEnvelope,
+        err: NeedsBrowserError,
+        start: float,
+        *,
+        log: Any,
+        solver_name: str,
+    ) -> None:
+        """Move the task to the browser lane, or fail it past the hop cap.
+
+        No billing write happens here: the task stays `processing`, the source
+        entry is acked only after the browser stream accepted the copy, and a
+        second hop is terminal `ERR_UNSOLVABLE`.
+        """
+        if envelope.lane_hops >= MAX_LANE_HOPS:
+            dead = UnsolvableError(
+                "lane escalation budget exhausted",
+                context={
+                    "type": envelope.task.type.value,
+                    "lane": _LANE,
+                    "lane_hops": envelope.lane_hops,
+                },
+            )
+            await self._finalize_failure(msg_id, envelope, dead, start, terminal=True, log=log, solver_name=solver_name)
+            return
+
+        try:
+            await escalate_to_browser(
+                producer=self._producer,
+                consumer=self._consumer,
+                message_id=msg_id,
+                envelope=envelope,
+                log=log,
+            )
+        except Exception as exc:
+            # Redis down or publish rejected: retry the HTTP attempt. The source
+            # entry was not acked, so the task is still ours.
+            log.warning("task.escalation_failed", error=str(exc), exc_info=True)
+            await self._finalize_failure(msg_id, envelope, err, start, terminal=False, log=log, solver_name=solver_name)
 
     async def _finalize_failure(
         self,

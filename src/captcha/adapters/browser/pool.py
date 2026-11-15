@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from captcha.adapters.browser.launchers import BackendName, Launcher, pick_launcher
+from captcha.adapters.browser.proxy import parse_proxy
 from captcha.adapters.browser.session import Session, SessionConfig
 from captcha.domain.errors import CaptchaError, ConfigError
 from captcha.domain.errors import TimeoutError as CaptchaTimeout
@@ -84,7 +85,7 @@ class Pool:
         if cfg.user_agent:
             kwargs["user_agent"] = cfg.user_agent
         if cfg.proxy:
-            kwargs["proxy"] = _parse_proxy(cfg.proxy)
+            kwargs["proxy"] = parse_proxy(cfg.proxy)
         if cfg.extra_headers:
             kwargs["extra_http_headers"] = cfg.extra_headers
         try:
@@ -179,24 +180,3 @@ class Pool:
 async def _safe_close(context: Any) -> None:
     with suppress(Exception):
         await context.close()
-
-
-def _parse_proxy(url: str) -> dict[str, str]:
-    """Normalize a proxy URL into playwright's proxy dict.
-
-    Accepts `scheme://user:pass@host:port` or `host:port`.
-    """
-    if "://" not in url:
-        return {"server": "http://" + url}
-    scheme, _, rest = url.partition("://")
-    userpass = ""
-    hostpart = rest
-    if "@" in rest:
-        userpass, _, hostpart = rest.partition("@")
-    proxy: dict[str, str] = {"server": f"{scheme}://{hostpart}"}
-    if userpass:
-        user, _, pw = userpass.partition(":")
-        proxy["username"] = user
-        if pw:
-            proxy["password"] = pw
-    return proxy

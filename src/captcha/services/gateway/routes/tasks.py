@@ -18,18 +18,21 @@ from captcha.application.route_task import route_task
 from captcha.domain.enums import CaptchaType, TaskStatus
 from captcha.domain.errors import CaptchaError
 from captcha.domain.pricing import estimate_cost
+from captcha.domain.redaction import redact_payload
 from captcha.domain.solution import build_solution, host_for_payload
 from captcha.domain.task import Task, TaskEnvelope
 from captcha.observability.metrics import tasks_created_total
 from captcha.services.gateway.auth import authenticate
 from captcha.services.gateway.deps import get_db, get_state
 from captcha.services.gateway.errors import (
+    ERR_NO_SLOT,
     ERR_TASK_NOT_FOUND,
     ERR_UNSUPPORTED_TYPE,
     ERR_ZERO_BALANCE,
     classify,
     envelope,
 )
+from captcha.services.gateway.quotas import QuotaGuard, QuotaLimits
 from captcha.services.gateway.schemas import (
     CreateTaskRequest,
     CreateTaskResponse,
@@ -73,6 +76,21 @@ async def create_task(
         return ORJSONResponse(envelope(ERR_UNSUPPORTED_TYPE), status_code=status.HTTP_200_OK)
 
     cost = estimate_cost(ct)
+
+    # Rate limit / quota, before the charge: a task the account isn't allowed
+    # to create must not cost anything. Limits come from Settings and are
+    # counted in Redis; a guard with no limits or no Redis allows everything.
+    guard = QuotaGuard(getattr(state, "redis", None), QuotaLimits.from_settings(getattr(state, "settings", None)))
+    quota_reason = await guard.check(account.id, cost)
+    if quota_reason is not None:
+        _log.info(
+            "task.quota_rejected",
+            reason=quota_reason,
+            type=ct.value,
+            account_id=str(account.id),
+        )
+        return ORJSONResponse(envelope(ERR_NO_SLOT), status_code=status.HTTP_200_OK)
+
     try:
         await acc_repo.charge(account.id, cost)
     except CaptchaError as exc:
@@ -83,10 +101,12 @@ async def create_task(
     # DB row first — the task id is the UUID the row carries.
     payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
     payload.pop("type", None)
+    # Postgres gets a credential-free copy: proxy*/cookies never reach JSONB.
+    # The full payload stays on the Task/envelope and therefore in Redis (24h).
     db_task = await task_repo.create(
         account_id=account.id,
         type_=ct.value,
-        payload=payload,
+        payload=redact_payload(payload),
         cost=cost,
         callback_url=body.callback_url,
     )
@@ -125,6 +145,13 @@ async def create_task(
         except Exception:
             _log.exception("refund.failed", task_id=str(task_id))
         return ORJSONResponse(classify("ERR_CONFIG", "enqueue failed"), status_code=status.HTTP_200_OK)
+
+    # Book the task into the active/daily counters now that it is on a stream.
+    # A quota-bookkeeping failure must never fail an already-enqueued task.
+    try:
+        await guard.record(account.id, task_id, cost)
+    except Exception:
+        _log.exception("task.quota_record_failed", task_id=str(task_id))
 
     tasks_created_total.labels(type=ct.value, lane=lane).inc()
 

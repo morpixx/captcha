@@ -72,6 +72,16 @@ class Settings(BaseSettings):
     # admin surface: empty token disables /admin/* entirely
     admin_token: str = Field(default="", alias="ADMIN_TOKEN")
 
+    # security: api-key hashing. Empty pepper still hashes, but loses the
+    # rainbow-table protection — production sets API_KEY_PEPPER.
+    api_key_pepper: str = Field(default="", alias="API_KEY_PEPPER")
+
+    # security: per-account limits in Redis. 0 disables a limit.
+    rate_limit_create_per_min: int = Field(default=60, alias="RATE_LIMIT_CREATE_PER_MIN")
+    max_active_tasks_per_account: int = Field(default=100, alias="MAX_ACTIVE_TASKS_PER_ACCOUNT")
+    max_daily_tasks: int = Field(default=10_000, alias="MAX_DAILY_TASKS")
+    max_daily_spend: float = Field(default=50.0, alias="MAX_DAILY_SPEND")
+
     # 2captcha pingback (callbackUrl)
     callback_timeout_sec: float = Field(default=10.0, alias="CALLBACK_TIMEOUT_SEC")
     callback_max_attempts: int = Field(default=3, alias="CALLBACK_MAX_ATTEMPTS")
