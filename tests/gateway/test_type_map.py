@@ -145,6 +145,23 @@ def test_address_may_carry_its_own_port() -> None:
     assert build_proxy_url(proxy_type="socks4", address="198.51.100.7:4145") == "socks4://198.51.100.7:4145"
 
 
+def test_credentials_may_be_embedded_in_the_address() -> None:
+    # Security's redaction test sends the whole proxy URL as proxyAddress.
+    url = build_proxy_url(
+        proxy_type="http",
+        address="http://user:pass@10.0.0.1:8080",
+        port=8080,
+    )
+    assert url == "http://user:pass@10.0.0.1:8080"
+    # ...and the flat login/password fields still win when both are present.
+    assert build_proxy_url(
+        proxy_type="http",
+        address="http://old:creds@10.0.0.1:8080",
+        login="new",
+        password="secret",
+    ) == "http://new:secret@10.0.0.1:8080"
+
+
 def test_explicit_port_wins_over_embedded_one() -> None:
     assert build_proxy_url(proxy_type="http", address="10.0.0.5:8080", port="3128") == "http://10.0.0.5:3128"
 

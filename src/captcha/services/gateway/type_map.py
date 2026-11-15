@@ -198,12 +198,22 @@ def _credentials(login: Any, password: Any) -> str:
     return auth + "@"
 
 
-def _split_host_port(address: str) -> tuple[str, int] | None:
-    """host:port out of a bare address; None when the address carries no port."""
+def _address_parts(address: str) -> tuple[str | None, str | None, str]:
+    """Split a proxy address into (scheme, embedded credentials, host:port)."""
     text = address.strip()
+    scheme = None
     if "://" in text:
-        text = text.split("://", 1)[1]
-    text = text.rsplit("@", 1)[-1]  # credentials glued to the address are irrelevant here
+        scheme, text = text.split("://", 1)
+        scheme = scheme.strip().lower()
+    auth = None
+    if "@" in text:
+        auth, _, text = text.rpartition("@")
+    return scheme, auth or None, text
+
+
+def _split_host_port(address: str) -> tuple[str, int] | None:
+    """host:port out of an address; None when the address carries no port."""
+    _scheme_name, _auth, text = _address_parts(address)
     if text.startswith("["):  # [2001:db8::1]:8080
         host, _, rest = text[1:].partition("]")
         if not rest.startswith(":"):
@@ -221,10 +231,7 @@ def _address_host(address: str) -> str:
     A bare IPv6 literal has several colons and no port in it, so only a single
     colon followed by digits is treated as an embedded port.
     """
-    text = address.strip()
-    if "://" in text:
-        text = text.split("://", 1)[1]
-    text = text.rsplit("@", 1)[-1]
+    _scheme_name, _auth, text = _address_parts(address)
     if text.startswith("["):
         return text[1:].partition("]")[0]
     if text.count(":") == 1:
@@ -254,10 +261,11 @@ def build_proxy_url(
             raise ProxyFormatError("proxyPort/proxyLogin/proxyPassword without proxyAddress")
         return None
 
+    address_scheme, embedded_auth, _host = _address_parts(address_text)
     if proxy_type is not None and _text(proxy_type) is not None:
         scheme = _scheme(proxy_type)
-    elif "://" in address_text:
-        scheme = _scheme(address_text.split("://", 1)[0])
+    elif address_scheme is not None:
+        scheme = _scheme(address_scheme)
     else:
         scheme = "http"
 
@@ -268,7 +276,15 @@ def build_proxy_url(
         host, number = parsed
     else:
         raise ProxyFormatError("proxyAddress has no port; send proxyPort")
-    return f"{scheme}://{_credentials(login, password)}{_bracket(host)}:{number}"
+    # Clients sometimes put the credentials straight into proxyAddress; the
+    # flat login/password fields take precedence when both are present.
+    if _text(login) is not None or password is not None:
+        auth = _credentials(login, password)
+    elif embedded_auth is not None:
+        auth = embedded_auth + "@"
+    else:
+        auth = ""
+    return f"{scheme}://{auth}{_bracket(host)}:{number}"
 
 
 def normalize_proxy_string(value: str, *, default_scheme: str | None = None) -> str:
