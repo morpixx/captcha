@@ -23,6 +23,7 @@ from captcha.application.route_task import route_task
 from captcha.domain.enums import CaptchaType, TaskStatus
 from captcha.domain.errors import CaptchaError
 from captcha.domain.pricing import estimate_cost
+from captcha.domain.redaction import redact_payload
 from captcha.domain.solution import build_solution, host_for_payload
 from captcha.domain.task import Task, TaskEnvelope
 from captcha.services.gateway.auth import authenticate
@@ -35,6 +36,7 @@ from captcha.services.gateway.legacy_map import (
     format_solution_string,
     parse_in_request,
 )
+from captcha.services.gateway.quotas import QuotaGuard, QuotaLimits
 from captcha.services.gateway.schemas import status_to_api
 from captcha.services.gateway.state import AppState
 
@@ -49,6 +51,7 @@ _NOT_READY = "CAPCHA_NOT_READY"
 _UNSOLVABLE = "ERROR_CAPTCHA_UNSOLVABLE"
 _TASK_NOT_FOUND = "ERROR_TASK_NOT_FOUND"
 _INTERNAL = "ERROR_INTERNAL"
+_NO_SLOT = "ERROR_NO_SLOT_AVAILABLE"
 
 
 # ---- wire helpers -----------------------------------------------------------
@@ -149,16 +152,31 @@ async def legacy_in(
     account_repo = AccountRepo(session)
     task_repo = TaskRepo(session)
 
+    # Same quota gate as the JSON API, before the charge: an account that hit a
+    # limit must not pay for a task that will be refused.
+    guard = QuotaGuard(getattr(state, "redis", None), QuotaLimits.from_settings(getattr(state, "settings", None)))
+    quota_reason = await guard.check(account.id, cost)
+    if quota_reason is not None:
+        _log.info(
+            "legacy.quota_rejected",
+            reason=quota_reason,
+            type=captcha_type.value,
+            account_id=str(account.id),
+        )
+        return _error(_NO_SLOT, as_json)
+
     try:
         await account_repo.charge(account.id, cost)
     except CaptchaError as exc:
         return _error(_public_error_code(exc.code), as_json)
 
     payload: dict[str, Any] = dict(ireq.payload)
+    # Postgres gets a credential-free copy: proxy*/cookies never reach JSONB.
+    # The full payload stays on the Task/envelope and therefore in Redis (24h).
     db_task = await task_repo.create(
         account_id=account.id,
         type_=captcha_type.value,
-        payload=payload,
+        payload=redact_payload(payload),
         cost=cost,
     )
     task_id: UUID = db_task.id
@@ -192,6 +210,13 @@ async def legacy_in(
         except Exception:
             _log.exception("legacy.refund.failed", task_id=str(task_id))
         return _error(_INTERNAL, as_json)
+
+    # Book the task into the active/daily counters once it is on a stream; a
+    # bookkeeping failure must never fail an already-enqueued task.
+    try:
+        await guard.record(account.id, task_id, cost)
+    except Exception:
+        _log.exception("legacy.quota_record_failed", task_id=str(task_id))
 
     return _ok(str(task_id), as_json)
 
