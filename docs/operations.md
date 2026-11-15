@@ -55,10 +55,9 @@ type health — `captcha:typehealth:<type>` (TTL 12 ч).
 | security | `ADMIN_TOKEN`, `API_KEY_PEPPER`, `RATE_LIMIT_CREATE_PER_MIN`, `MAX_ACTIVE_TASKS_PER_ACCOUNT`, `MAX_DAILY_TASKS`, `MAX_DAILY_SPEND`, `ALLOW_EXPERIMENTAL_TASKS` |
 | pingback | `CALLBACK_TIMEOUT_SEC`, `CALLBACK_MAX_ATTEMPTS` |
 
-**`ALLOW_EXPERIMENTAL_TASKS`:** `.env.example` содержит переменную с beta-значением `1`;
-прод по контракту §7 обязан ставить `0` (иначе продаются типы, у которых единственный
-солвер `experimental`). Дефолт `config.py` — тоже `1`, поэтому на стенде без `.env` гейт
-выключен.
+**`ALLOW_EXPERIMENTAL_TASKS`:** дефолт `config.py` и `.env.example` — `0`: типы, у
+которых единственный солвер `experimental`, не продаются. `1` — явный beta-оверрайд,
+который снова открывает 38 типов; прод по контракту §7 держит `0`.
 
 Обязательные для прода: `API_KEY_PEPPER` (непустой), `ADMIN_TOKEN`, `POSTGRES_URL`,
 `REDIS_URL`, `CANARY_ALERT_WEBHOOK`. Пустой `ADMIN_TOKEN` = выключенная админка, пустой

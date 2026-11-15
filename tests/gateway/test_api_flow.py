@@ -247,6 +247,43 @@ async def test_unknown_key_is_an_auth_error_in_both_protocols(wired, monkeypatch
     assert legacy.text == "ERROR_ACCOUNT_SUSPENDED"
 
 
+async def test_experimental_gate_refuses_before_charge_and_publish(wired) -> None:
+    """Contract §7 at the route: the default deployment withholds experimental-only types.
+
+    The sellable set comes from the real registry with the gate off, which is
+    what build_state produces for a Settings without ALLOW_EXPERIMENTAL_TASKS=1.
+    """
+    from captcha.services.gateway.app import sellable_types
+    from captcha.solvers import discover_solvers
+
+    client, state = wired
+    state.solver_types = sellable_types(discover_solvers(), frozenset(), allow_experimental=False)
+
+    refused = await client.post(
+        "/createTask",
+        json={
+            "clientKey": CLIENT_KEY,
+            "task": {"type": "recaptcha_v3", "websiteURL": "https://example.com", "websiteKey": "k"},
+        },
+    )
+    body = refused.json()
+    assert body["errorId"] == 12
+    assert body["errorCode"] == "ERROR_TASK_NOT_SUPPORTED"
+    assert FakeAccountRepo.charges == [], "a gated type must not be billed"
+    assert state.producer.published == [], "a gated type must not reach a stream"
+
+    sold = await client.post(
+        "/createTask",
+        json={
+            "clientKey": CLIENT_KEY,
+            "task": {"type": "recaptcha_v2", "websiteURL": "https://example.com", "websiteKey": "k"},
+        },
+    )
+    assert sold.json()["errorId"] == 0, sold.text
+    assert len(FakeAccountRepo.charges) == 1
+    assert len(state.producer.published) == 1
+
+
 async def test_unsupported_type_is_refused_before_charging(wired) -> None:
     client, state = wired
     # gt is a slider-vendor type this fake deployment does not claim to solve.
