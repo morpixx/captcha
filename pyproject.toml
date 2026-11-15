@@ -35,6 +35,8 @@ dependencies = [
     "numpy>=2.0",
     "pillow>=11",
     "simpleeval>=0.9.13",
+    # browser lane: process-tree kill + temporary-profile reaper
+    "psutil>=6.0",
     # observability
     "structlog>=24.4",
     "prometheus-client>=0.21",
