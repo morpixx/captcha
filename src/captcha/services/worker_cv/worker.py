@@ -159,6 +159,10 @@ class Worker:
 
         if self._registry is None:
             self._registry = discover_solvers(registry=global_registry())
+        # The reCAPTCHA audio path and variant dispatch pick another solver by
+        # type; expose the same registry the worker already owns.
+        if isinstance(self._ctx.extra, dict):
+            self._ctx.extra.setdefault("solver_registry", self._registry)
         await self._prepare_solvers()
 
         if self._heartbeat is None:
