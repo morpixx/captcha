@@ -33,17 +33,17 @@ Riot/Steam по HTTP не собирается, поэтому hCaptcha-family �
 
 | лейн | воркер | что внутри | типов | ключевые настройки |
 |---|---|---|---|---|
-| `http` | `services/worker_http` | `curl_cffi` + JA3/JA4-профили, JS-песочница, сенсор-билдеры | 20 | `WORKER_HTTP_CONCURRENCY=512`, `WORKER_HTTP_IMPERSONATE=chrome124` |
-| `cv` | `services/worker_cv` | torch/torchvision/opencv/whisper, реестр весов | 38 | `WORKER_CV_DEVICE=cpu` (на GPU-ноде — `cuda`) |
+| `http` | `services/worker_http` | `curl_cffi` + JA3/JA4-профили, JS-песочница, сенсор-билдеры | 21 | `WORKER_HTTP_CONCURRENCY=512`, `WORKER_HTTP_IMPERSONATE=chrome124` |
+| `cv` | `services/worker_cv` | torch/torchvision/opencv/whisper, реестр весов | 34 (+ `hopscotch`) | `WORKER_CV_DEVICE=cpu` (на GPU-ноде — `cuda`) |
 | `protocol` | `services/worker_protocol` | PoW, сборка сенсоров, чистый CPU | 2 | `WORKER_PROTOCOL_CONSUMERS=2` |
-| `browser` | `services/worker_browser` | Camoufox, одна свежая сессия на задачу | 2 | `WORKER_BROWSER_SESSIONS=12`, `WORKER_BROWSER_MIN_FREE_MB=2048`, `WORKER_BROWSER_TASK_TIMEOUT_SEC=240` |
+| `browser` | `services/worker_browser` | Camoufox, одна свежая сессия на задачу | 5 | `WORKER_BROWSER_SESSIONS=12`, `WORKER_BROWSER_MIN_FREE_MB=2048`, `WORKER_BROWSER_TASK_TIMEOUT_SEC=240` |
 
 Раскладка по `domain/catalog.py`, проверяется одной командой:
 
 ~~~powershell
-$env:PYTHONPATH='D:\wt\captcha-docs\src'
-D:/captcha/.venv/Scripts/python.exe -c "from captcha.domain.enums import CaptchaType; from captcha.domain import catalog; print({l: len([t for t in CaptchaType if catalog.lane_for(t)==l]) for l in catalog.LANES})"
-# {'http': 20, 'cv': 38, 'protocol': 2, 'browser': 2}
+$env:PYTHONPATH='src'
+uv run python -c "from captcha.domain.enums import CaptchaType; from captcha.domain import catalog; print({l: len([t for t in CaptchaType if catalog.lane_for(t) == l]) for l in catalog.LANES})"
+# {'http': 21, 'cv': 35, 'protocol': 2, 'browser': 5}    (cv = 34 вендорских + hopscotch)
 ~~~
 
 Лейн — свойство типа, не клиента: `application/route_task.py` читает каталог и кладёт
@@ -251,10 +251,18 @@ SETEX captcha:lane:<lane>:<worker> 90 1      # жив ли воркер
 SADD  captcha:cap:<lane> <type>...           # что он умеет
 ~~~
 
-TTL 90 с, бит раз в 30 с (`worker_browser/heartbeat.py`). Просроченный heartbeat убирает
-воркера из маршрута за один TTL; набор типов живёт дольше, но лейн без живого heartbeat
-игнорируется целиком, поэтому устаревший набор не может «воскресить» мёртвый лейн.
-`/readyz` отвечает 503, если Redis, Postgres или ни одного живого heartbeat.
+TTL 90 с, бит раз в 30 с. Битят два лейна: `worker_http` (`worker_http/heartbeat.py`) и
+`worker_browser` (`worker_browser/heartbeat.py`); `worker_cv` и `worker_protocol` heartbeat
+не пишут. Просроченный heartbeat убирает воркера из маршрута за один TTL; набор типов живёт
+дольше, но лейн без живого heartbeat игнорируется целиком, поэтому устаревший набор не может
+«воскресить» мёртвый лейн. `/readyz` отвечает 503, если Redis, Postgres или ни одного живого
+heartbeat.
+
+Продажу heartbeat ограничивает только для `browser`: `gateway/app.py: _available_types`
+отдаёт `(реестр − browser-типы) ∪ live_types`, то есть дорогой лейн продаётся лишь при
+свежем heartbeat, а остальные типы — из реестра. Live-набор читается один раз в
+`build_state`, поэтому смерть browser-воркера после старта gateway видна только новому
+heartbeat-опросу при следующем рестарте.
 
 ## Canary
 
@@ -264,6 +272,10 @@ TTL 90 с, бит раз в 30 с (`worker_browser/heartbeat.py`). Просро�
 `captcha:typehealth:<type>` (`ok`/`degraded`, TTL 12 ч) и в метрики
 `captcha_canary_pass_rate{type}`, `captcha_type_health{type}`. Ниже порога
 `CANARY_PASS_THRESHOLD` (0.9) — POST в `CANARY_ALERT_WEBHOOK`.
+
+Фикстуры в репозитории: `tests/canary/fixtures/` — `friendly_captcha_v1` и `altcha_v1`,
+то есть 2 типа из 62; `tests/canary/test_fixtures.py` пинит непустой набор и проверяет, что
+payload парсится тем солвером, который его получит. Остальные 60 типов фикстур не имеют.
 
 Пустой набор фикстур — отдельный случай: отчёт получается `pass_rate=1.0`, алерт уходит
 только как `reason=no_fixtures` при настроенном webhook, а `--once` возвращает 0. Поэтому
@@ -308,30 +320,45 @@ SOLVERS: 60 записей
 
 Импорт ≠ работа: `slider` решает на numpy-бэкенде (`gap_detect.BACKENDS`), а `rotate`,
 detection- и classification-солверы импортируются, но отвечают на задаче `ERR_CONFIG` без
-`cv2`/торча/весов. `docs/baseline.md` снят раньше (56 загруженных, 60/62) и не
+`cv2`/торча/весов. `experimental=True` стоит у 42 из 60 солверов — это 38 вендорских типов
+плюс `hopscotch`. `docs/baseline.md` снят раньше (56 загруженных, 60/62) и не
 переписывается. Если солвера нет, gateway отбивает тип на входе (`ERROR_TASK_NOT_SUPPORTED`)
 и не списывает деньги.
 
 ## Что ещё не сделано
 
-1. **Capabilities не влияют на продажу.** Контракт §7 требует
-   `state.solver_types = registry ∪ CAPTCHA_EXTRA_TYPES ∪ heartbeat-cap-sets`.
-   Сейчас gateway берёт типы из реестра на старте (`services/gateway/app.py`),
-   `CAPTCHA_EXTRA_TYPES` не существует, heartbeat-набор читает только `/readyz`.
-2. **`ALLOW_EXPERIMENTAL_TASKS` не реализован.** Воркер выбирает солвер с
-   `allow_experimental=True` (`worker_http/worker.py`), потому что иначе 36
-   antibot/interactive-солверов недостижимы. Это не цель, а временное состояние до L3.
-3. **TLS-ингресс.** Контракт §9 требует TLS на входе; в репозитории только Dockerfile и
-   compose без reverse-proxy (`infra/`, `docker-compose.yml`). Прод-схема — `runbooks/deploy.md`.
-4. **worker-browser и canary не в compose.** Оба процесса запускаются вручную
-   (`python -m captcha.services.worker_browser`, `… .canary`); compose их не описывает.
-5. **Runbook на каждый тип.** Есть шаблон, четыре операционных runbook-а и типовые на 36 из
+1. **Продажа по heartbeat покрывает только `browser`.** `_available_types`
+   (`services/gateway/app.py`) продаёт типы `browser`-лейна лишь при свежем heartbeat, а
+   остальные берёт из реестра. `CAPTCHA_EXTRA_TYPES` (контракт §7) не существует; live-набор
+   читается один раз в `build_state`, поэтому упавший после старта browser-воркер не убирает
+   свои типы до рестарта gateway; `worker_cv` и `worker_protocol` heartbeat не пишут.
+2. **`ALLOW_EXPERIMENTAL_TASKS` реализован, но в beta включён.** `config.py`
+   (`allow_experimental_tasks`, default `True`) и `sellable_types` фильтруют
+   experimental-only типы только при `0`; `worker_http/worker.py` по-прежнему выбирает
+   солвер с `allow_experimental=True`. С `0` из 62 вендорских типов продаются 24 — у
+   остальных 38 единственный солвер помечен `experimental`. Контракт §7 требует `0` в
+   проде; переменной нет в `.env.example`.
+3. **TLS-ингресс есть.** `infra/caddy/Caddyfile` + сервис `caddy` — единственный с
+   published ports (80/443): ACME при заданном `CAPTCHA_DOMAIN`, иначе внутренний CA;
+   gateway торчит только `expose: 8080`. Дев-оверлей (`docker-compose.dev.yml`) выключает
+   Caddy профилем `edge` и публикует `127.0.0.1:8080`. Прод-схема — `runbooks/deploy.md`.
+4. **worker-browser и canary в compose, но за профилями** `browser` и `canary`, поэтому
+   `make dev` их не поднимает: browser-ноде нужен camoufox и ~16 ГБ RAM. Фикстуры canary
+   монтируются read-only из `./tests/canary/fixtures`.
+5. **netguard не на границе gateway — в работе.** Модуль и тесты есть
+   (`adapters/netguard.py`, `tests/adapters/test_netguard.py`), вызовы — только браузерная
+   навигация (`adapters/browser/provider.py`). `pageurl`, `websiteURL`, `challenge_url`,
+   `surl`, `api_server` из `createTask` доходят до HTTP-солверов без проверки; ветка
+   `feat/netguard-http` не смержена; в `SECURITY.md` §8 это открытый пункт 1.
+6. **Runbook на каждый тип.** Есть шаблон, операционные runbook-и и типовые на 36 из
    62 вендорских типов плюс `hopscotch`; остальные 26 заведены в `runbooks/README.md` со
    статусом «pending».
-6. **Антибот: 12 движков — каркас.** Солверы и билдеры кончаются `not_implemented` до живого
-   реверса; схемы полей помечены `# FILL:`.
-7. **ML: весов нет.** Код классификации/детекции/поворота написан; что учить и как положить
+7. **Антибот: wire собран, живого реверса нет.** `not_implemented()` остался только у
+   `botdeflector`; остальные 11 движков собирают payload и результат, но схемы полей
+   помечены `# FILL:`, живой прогон не подтверждён — отсюда `experimental=True`.
+8. **ML: весов нет.** Код классификации/детекции/поворота написан; что учить и как положить
    в бакет — `docs/ml.md`, `make expected-models`, `make publish-model`.
-8. **`SolverResult` — один struct** с семью опциональными полями; варианты
+9. **`SolverResult` — один struct** с семью опциональными полями; варианты
    (`TokenSolution`, `CookieSolution`, …) не выделены.
-9. **mypy красный**, в CI не входит.
+10. **mypy красный целиком**, в CI входит только scoped-набор (`make typecheck-core`:
+    domain, application, engines, storage, netguard, metrics — ноль ошибок).
