@@ -39,6 +39,8 @@ class ArtifactSpec:
     artifact: str
     files: tuple[str, ...]
     primary: str
+    #: uploaded when present, verified when present, never required
+    optional_files: tuple[str, ...] = ()
     json_files: tuple[str, ...] = DEFAULT_JSON_FILES
     framework: Framework = "safetensors"
 
@@ -48,6 +50,8 @@ HOPSCOTCH_V1 = ArtifactSpec(
     artifact="hopscotch-v1",
     files=("model.safetensors", "config.json", "release.json"),
     primary="model.safetensors",
+    # the training kit also drops checksums.json next to the triple
+    optional_files=("checksums.json",),
 )
 
 #: Known bundle artifacts. Unknown names are still publishable - the file set in
@@ -80,17 +84,22 @@ class FileCheck:
     actual_sha256: str = ""
     size_bytes: int = 0
     ok: bool = False
+    note: str = ""
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "name": self.name,
             "expected_sha256": self.expected_sha256,
             "actual_sha256": self.actual_sha256,
             "size_bytes": self.size_bytes,
             "ok": self.ok,
-            "error": self.error,
         }
+        if self.note:
+            out["note"] = self.note
+        if self.error:
+            out["error"] = self.error
+        return out
 
 
 @dataclass(slots=True)
@@ -101,8 +110,11 @@ class ArtifactCheck:
     version: str
     ok: bool
     meta: ModelMeta | None = None
+    manifest_present: bool = False
     failures: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     files: list[FileCheck] = field(default_factory=list)
+    extra_files: list[str] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
     release: dict[str, Any] = field(default_factory=dict)
 
@@ -115,8 +127,11 @@ class ArtifactCheck:
             "layout": self.meta.layout if self.meta else "",
             "framework": self.meta.framework if self.meta else "",
             "primary_sha256": self.meta.sha256 if self.meta else "",
+            "manifest_present": self.manifest_present,
             "failures": list(self.failures),
+            "warnings": list(self.warnings),
             "files": [f.to_dict() for f in self.files],
+            "extra_files": list(self.extra_files),
             "config": dict(self.config),
             "release": dict(self.release),
         }
@@ -134,6 +149,17 @@ def spec_for(name: str, files: Iterable[str]) -> ArtifactSpec:
             context={"files": list(present), "known": sorted(SPECS)},
         )
     return ArtifactSpec(artifact=name, files=present, primary=primary)
+
+
+def is_bundle(meta: ModelMeta) -> bool:
+    """True for the directory layout.
+
+    An explicit bundle meta says so. An artifact published by the hopscotch
+    training kit carries no manifest: meta.json has layout="single" and
+    s3_key=<name>/<version>/model.safetensors, with config/release/checksums
+    sitting next to it in the bucket. Both are the bundle layout on disk.
+    """
+    return meta.layout == "bundle" or Path(meta.s3_key).name in PRIMARY_CANDIDATES
 
 
 def sha256_file(path: Path, chunk: int = 1024 * 1024) -> str:
@@ -178,7 +204,8 @@ def validate_bundle(payload: Mapping[str, bytes], spec: ArtifactSpec) -> None:
             f"bundle is missing {', '.join(missing)}",
             context={"artifact": spec.artifact, "have": sorted(payload)},
         )
-    unexpected = sorted(set(payload) - set(spec.files) - {BUNDLE_META_FILE})
+    allowed = set(spec.files) | set(spec.optional_files) | {BUNDLE_META_FILE}
+    unexpected = sorted(set(payload) - allowed)
     if unexpected:
         raise ConfigError(
             f"bundle has unexpected files: {', '.join(unexpected)}",

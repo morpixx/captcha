@@ -1,30 +1,59 @@
-"""CyberSiara sensor builder.
+"""CyberSiARA sensor builder.
 
-CyberSiara posts a signed proof-of-work + fingerprint bundle to /v1/token.
-Difficulty bumps dynamically based on IP reputation.
+CyberSiARA's widget is a slide-to-verify challenge: the script draws the puzzle,
+collects the drag track and posts the verification itself, then hands the page a
+master URL token. The verification body is not published (the vendor's own
+`MasterController` builds it), so this builder does not pretend to assemble one.
 
-# FILL: full schema per CyberSiara release — see runbooks/cybersiara.md
+Two artefacts:
+
+* with the widget script in the payload -- a capture program
+  (:mod:`captcha.engines.capture`) seeded with the site key and the page, so the
+  script can run and the token can be read where it lands;
+* without it -- nothing. A slide whose gesture has to be human-shaped belongs in
+  the browser lane, and the solver escalates.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import json
 
 from captcha.domain.enums import AntibotEngine
 from captcha.domain.errors import SensorError
 from captcha.engines.base import BuildContext, SensorBuilder
+from captcha.engines.capture import setup_js, wrap
 from captcha.engines.registry import register_builder
 
 
 @register_builder(AntibotEngine.CYBERSIARA)
 class CyberSiaraBuilder(SensorBuilder):
-    name = "cybersiara"
-    requires_challenge_js = False
-    uses_js_runtime = False
+    """Capture program for the CyberSiARA widget script."""
 
-    async def build(self, ctx: BuildContext) -> dict[str, Any]:
-        # FILL: solve PoW via captcha.crypto.pow.cybersiara, sign payload
-        raise SensorError(
-            "cybersiara token assembly not yet implemented — see runbooks/cybersiara.md",
-            context={"site": ctx.site_url},
+    name = "cybersiara"
+    requires_challenge_js = True
+    uses_js_runtime = True
+
+    async def build(self, ctx: BuildContext) -> str:
+        if not ctx.challenge_js:
+            raise SensorError(
+                "cybersiara builder needs the widget script; a slide is minted client-side",
+                context={"site": ctx.site_url},
+            )
+        sitekey = str(ctx.extra.get("sitekey") or "").strip()
+        setup = "\n".join(
+            (
+                setup_js(
+                    href=ctx.site_url,
+                    user_agent=str(ctx.extra.get("ua") or ""),
+                    cookies=dict(ctx.cookies),
+                    storage=dict(ctx.extra.get("storage") or {}),
+                ),
+                f"var SlideMasterUrlId = {json.dumps(sitekey)};",
+                f"var MasterUrlId = {json.dumps(sitekey)};",
+                f"var __cybersiaraKey = {json.dumps(sitekey)};",
+            )
         )
+        return wrap(ctx.challenge_js, engine="cybersiara", setup=setup)
+
+
+__all__ = ["CyberSiaraBuilder"]

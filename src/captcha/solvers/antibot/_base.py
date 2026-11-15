@@ -20,6 +20,20 @@ from captcha.domain.enums import AntibotEngine
 from captcha.domain.errors import ConfigError, SensorError
 from captcha.solvers import Solver, SolverContext
 
+#: Payload keys that carry the protected page, in the order `domain/solution.py`
+#: resolves them. A worker is normally handed `task.site_url` already, but a raw
+#: task or a replay fixture may only carry the wire name (`websiteURL`), and a
+#: capture program seeded with an empty `location.href` is useless.
+SITE_URL_KEYS: tuple[str, ...] = ("site_url", "websiteURL", "websiteUrl", "pageurl", "url")
+
+
+def _site_url(payload: dict[str, Any]) -> str:
+    for key in SITE_URL_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
 
 class AntibotBase(Solver):
     """Thin mixin over `Solver` with engine helpers.
@@ -78,7 +92,7 @@ class AntibotBase(Solver):
 
         build_ctx = BuildContext(
             engine=self.engine,
-            site_url=challenge_payload.get("site_url") or challenge_payload.get("url") or "",
+            site_url=_site_url(challenge_payload),
             fingerprint=ctx.fingerprint_store.pick() if ctx.fingerprint_store else None,
             behavior=challenge_payload.get("behavior"),
             challenge_js=challenge_payload.get("challenge_js"),
