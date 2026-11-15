@@ -84,6 +84,11 @@ URL задачи — `websiteURL`/`pageurl`, `challenge_url`, `surl`, `api_serve
 его собирает солвер. Тот же guard стоит в транспорте: `Client` не открывает сокет на
 приватный адрес и проверяет каждый redirect hop, а не только первый URL.
 
+Гейт experimental-типов (§7 контракта) — `ALLOW_EXPERIMENTAL_TASKS`. При `0` типы, у которых
+единственный солвер помечен `experimental=True` (38 из 62 вендорских), отбиваются
+`ERROR_TASK_NOT_SUPPORTED` без списания; при `1` продаются. В beta значение по умолчанию —
+`1`; прод по контракту обязан ставить `0`.
+
 ## Прокси
 
 Плоские поля официального API (camelCase, snake_case тоже принимается):
@@ -126,6 +131,13 @@ URL задачи — `websiteURL`/`pageurl`, `challenge_url`, `surl`, `api_serve
 `enterprisePayload` строкой, не являющейся JSON, трактуется как голый rqdata-токен — это
 встречается у клиентов, которые путают два поля. Всё остальное из `task` проходит в
 `payload` без изменений (`extra="allow"`).
+
+**Same-origin.** hCaptcha привязывает токен к sitekey-хосту **и к странице, которая его
+сминтила**: токен, полученный на одном домене, не принимается на другом. Поэтому `host`
+обязан совпадать с хостом `websiteURL`; при расхождении задача падает терминально
+(`ERR_UNSOLVABLE`, публичный код — `ERROR_CAPTCHA_UNSOLVABLE`, errorId 12), а не отдаёт
+мёртвый токен (`solvers/hcaptcha/wire.py: params_from_task`). Клиент, который передаёт
+`host` вручную, подставляет домен той страницы, где виджет реально стоит.
 
 ## Форма решения (JSON API)
 
@@ -190,6 +202,11 @@ Legacy добавляет два своих: `ERROR_NO_SUCH_METHOD` (неизв�
 уходят (см. следующий раздел); `ERR_QUOTA` пока никем не выбрасывается — лимиты отвечают
 envelope-ом `ERROR_NO_SLOT_AVAILABLE` прямо в gateway. `ERR_URL_REJECTED` отвечает клиенту
 публичным `ERROR_BAD_REQUEST` (errorId 21) и никогда не доходит до очереди.
+
+`ERR_URL_REJECTED` сегодня может прийти только из браузерного лейна: netguard проверяет
+`websiteURL` и финальный URL навигации (`adapters/browser/provider.py`), а клиентские
+`pageurl` / `websiteURL` / `challenge_url` / `surl` / `api_server` на границе gateway пока
+не валидируются — эта работа в ветке `feat/netguard-http` и не смержена.
 
 ## Браузерный лейн в API
 
