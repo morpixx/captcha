@@ -9,11 +9,13 @@ silently between training and serving.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 from conftest import release_payload
 from ml.hopscotch.dataset import (
     load_dataset,
@@ -24,10 +26,12 @@ from ml.hopscotch.dataset import (
 )
 from ml.hopscotch.evaluate import evaluate_command, score_predictions, summarize_report
 from ml.hopscotch.export import build_config, build_release, export_run, verify_artifact
-from ml.hopscotch.publish import build_meta, publish
+from ml.hopscotch.publish import publish
 from ml.hopscotch.split import import_upstream_roles
 from ml.hopscotch.train import train_plan
 
+from captcha.adapters.weights import Registry
+from captcha.adapters.weights.meta import decode_meta
 from captcha.domain.errors import ConfigError
 
 # ---- synthetic sources ------------------------------------------------------
@@ -319,52 +323,201 @@ def test_verify_artifact_detects_tampering(tmp_path: Path) -> None:
 # ---- publish ----------------------------------------------------------------
 
 
+def _missing(key: str) -> ClientError:
+    return ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": key}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+        "GetObject",
+    )
+
+
+class _Paginator:
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self._objects = objects
+
+    def paginate(self, *, Bucket: str, Prefix: str = "", Delimiter: str = "") -> list[dict[str, Any]]:
+        keys = sorted(key for key in self._objects if key.startswith(Prefix))
+        if not Delimiter:
+            return [{"Contents": [{"Key": key, "Size": len(self._objects[key])} for key in keys]}]
+        prefixes: set[str] = set()
+        for key in keys:
+            tail = key[len(Prefix) :]
+            if Delimiter in tail:
+                prefixes.add(f"{Prefix}{tail.split(Delimiter, 1)[0]}{Delimiter}")
+        return [{"CommonPrefixes": [{"Prefix": p} for p in sorted(prefixes)]}]
+
+
 class FakeS3:
+    """Just the S3 calls the registry makes; objects are kept in a dict."""
+
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.puts: list[str] = []
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes) -> None:
-        self.objects[f"{Bucket}/{Key}"] = Body
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **_: Any) -> dict[str, Any]:
+        self.objects[f"{Bucket}/{Key}"] = bytes(Body)
+        self.puts.append(f"{Bucket}/{Key}")
+        return {}
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        scoped = f"{Bucket}/{Key}"
+        if scoped not in self.objects:
+            raise _missing(Key)
+        return {"Body": io.BytesIO(self.objects[scoped])}
+
+    def download_fileobj(self, Bucket: str, Key: str, buf: io.BytesIO, **_: Any) -> None:
+        scoped = f"{Bucket}/{Key}"
+        if scoped not in self.objects:
+            raise _missing(Key)
+        buf.write(self.objects[scoped])
+
+    def get_paginator(self, name: str) -> _Paginator:
+        assert name == "list_objects_v2"
+        return _Paginator({key.split("/", 1)[1]: body for key, body in self.objects.items()})
 
 
-def test_publish_uploads_sidecars_and_latest(tmp_path: Path) -> None:
-    run = _run_dir(tmp_path, release_payload(model_id=CHECKPOINT_SHA))
-    artifact = export_run(run, tmp_path / "out", version="v1", converter=_fake_converter)
-    s3 = FakeS3()
-    result = publish(
-        artifact.directory,
-        version="v1",
-        s3=s3,
+def _registry(tmp_path: Path, s3: FakeS3) -> Registry:
+    return Registry(
+        s3_endpoint="http://minio.invalid:9000",
         bucket="captcha",
+        client=s3,
         cache_dir=tmp_path / "cache",
     )
-    assert "captcha/hopscotch-v1/v1/model.safetensors" in s3.objects
-    assert "captcha/hopscotch-v1/v1/config.json" in s3.objects
-    assert "captcha/hopscotch-v1/v1/release.json" in s3.objects
+
+
+def _exported(tmp_path: Path, *, release: dict[str, Any] | None = None) -> Path:
+    run = _run_dir(tmp_path, release or release_payload(model_id=CHECKPOINT_SHA))
+    return export_run(run, tmp_path / "out", version="v1", converter=_fake_converter).directory
+
+
+def _published_meta(s3: FakeS3, name: str = "hopscotch-v1", version: str = "v1") -> Any:
+    return decode_meta(s3.objects[f"captcha/{name}/{version}/meta.json"])
+
+
+def test_publish_writes_a_per_file_manifest(tmp_path: Path) -> None:
+    artifact_dir = _exported(tmp_path)
+    s3 = FakeS3()
+    result = publish(artifact_dir, version="v1", s3=s3, bucket="captcha")
+
+    meta = _published_meta(s3)
+    assert meta.layout == "bundle"
+    assert meta.artifact == "hopscotch-v1"
+    assert meta.s3_key == "hopscotch-v1/v1/model.safetensors"
+    assert meta.framework == "safetensors"
+    assert meta.input_schema["frames"] == [5, 8]
+    # checksums.json is an optional sidecar: exported here, so it ships too.
+    assert set(meta.files) == {"model.safetensors", "config.json", "release.json", "checksums.json"}
+    for name, digest in meta.files.items():
+        assert digest == hashlib.sha256((artifact_dir / name).read_bytes()).hexdigest()
+        assert s3.objects[f"captcha/hopscotch-v1/v1/{name}"] == (artifact_dir / name).read_bytes()
     assert s3.objects["captcha/hopscotch-v1/latest"] == b"v1"
-    assert result.cache_dir is not None and (result.cache_dir / "model.safetensors").is_file()
-    meta = json.loads(s3.objects["captcha/hopscotch-v1/v1/meta.json"])
-    assert meta["s3_key"] == "hopscotch-v1/v1/model.safetensors"
-    assert meta["framework"] == "safetensors"
+    assert result.files == meta.files
+    assert result.meta is not None and result.meta.layout == "bundle"
+
+
+def test_publish_without_checksums_is_still_complete(tmp_path: Path) -> None:
+    artifact_dir = _exported(tmp_path)
+    (artifact_dir / "checksums.json").unlink()
+    s3 = FakeS3()
+    publish(artifact_dir, version="v1", s3=s3, bucket="captcha")
+
+    meta = _published_meta(s3)
+    assert set(meta.files) == {"model.safetensors", "config.json", "release.json"}
+    assert "captcha/hopscotch-v1/v1/checksums.json" not in s3.objects
+
+
+def test_check_artifact_verifies_every_published_file(tmp_path: Path) -> None:
+    artifact_dir = _exported(tmp_path)
+    s3 = FakeS3()
+    registry = _registry(tmp_path, s3)
+    publish(artifact_dir, version="v1", registry=registry)
+
+    check = registry.check_artifact("hopscotch-v1", "v1")
+    assert check.ok, check.failures
+    assert check.manifest_present
+    assert [f.name for f in check.files] == [
+        "checksums.json",
+        "config.json",
+        "model.safetensors",
+        "release.json",
+    ]
+    assert all(f.ok for f in check.files)
+    sidecar = next(f for f in check.files if f.name == "checksums.json")
+    assert "optional file" in sidecar.note
+    assert check.config["format"] == "hopscotch-v1-config"
+
+
+def test_publish_materializes_the_cache_from_the_bucket(tmp_path: Path) -> None:
+    artifact_dir = _exported(tmp_path)
+    s3 = FakeS3()
+    cache = tmp_path / "cache"
+    result = publish(artifact_dir, version="v1", s3=s3, bucket="captcha", cache_dir=cache)
+
+    assert result.cache_dir == cache / "hopscotch-v1" / "v1"
+    assert result.cache_dir is not None and result.cache_dir.is_dir()
+    assert (result.cache_dir / "model.safetensors").read_bytes() == (
+        artifact_dir / "model.safetensors"
+    ).read_bytes()
+
+
+def test_publish_dry_run_uploads_nothing(tmp_path: Path) -> None:
+    artifact_dir = _exported(tmp_path)
+    s3 = FakeS3()
+    result = publish(artifact_dir, version="v1", s3=s3, bucket="captcha", dry_run=True)
+
+    assert s3.objects == {}
+    assert result.meta is None
+    assert "hopscotch-v1/v1/meta.json" in result.keys
+    assert "hopscotch-v1/latest" in result.keys
+    assert set(result.files) == {"model.safetensors", "config.json", "release.json", "checksums.json"}
 
 
 def test_publish_refuses_not_ready_release(tmp_path: Path) -> None:
-    run = _run_dir(tmp_path, release_payload(model_id=CHECKPOINT_SHA, status="not_ready", threshold=None))
-    artifact = export_run(run, tmp_path / "out", converter=_fake_converter)
-    with pytest.raises(ConfigError):
-        publish(artifact.directory, s3=FakeS3(), bucket="captcha")
-    allowed = publish(
-        artifact.directory, s3=FakeS3(), bucket="captcha", allow_not_ready=True
+    artifact_dir = _exported(
+        tmp_path, release=release_payload(model_id=CHECKPOINT_SHA, status="not_ready", threshold=None)
     )
+    s3 = FakeS3()
+    with pytest.raises(ConfigError):
+        publish(artifact_dir, s3=s3, bucket="captcha")
+    assert s3.objects == {}
+    allowed = publish(artifact_dir, s3=FakeS3(), bucket="captcha", allow_not_ready=True)
     assert allowed.artifact.release.status == "not_ready"
 
 
-def test_meta_matches_registry_expectations(tmp_path: Path) -> None:
-    run = _run_dir(tmp_path, release_payload(model_id=CHECKPOINT_SHA))
-    artifact = export_run(run, tmp_path / "out", version="v1", converter=_fake_converter)
-    meta = build_meta("hopscotch-v1", "v1", artifact.directory / "model.safetensors", artifact.artifact)
-    assert meta["size_bytes"] == len(b"fake-safetensors-bytes")
-    assert meta["input_schema"]["frames"] == [5, 8]
+def test_publish_rejects_a_stray_file(tmp_path: Path) -> None:
+    artifact_dir = _exported(tmp_path)
+    (artifact_dir / "notes.txt").write_text("scratch", encoding="utf-8")
+    s3 = FakeS3()
+    with pytest.raises(ConfigError, match=r"unexpected files"):
+        publish(artifact_dir, s3=s3, bucket="captcha")
+    assert s3.objects == {}
+
+
+def test_publish_rejects_conflicting_cache_and_bucket_options(tmp_path: Path) -> None:
+    artifact_dir = _exported(tmp_path)
+    s3 = FakeS3()
+    registry = _registry(tmp_path, s3)
+    with pytest.raises(ConfigError, match="either registry= or bucket="):
+        publish(artifact_dir, registry=registry, bucket="captcha")
+    with pytest.raises(ConfigError, match="cache_dir is owned by the registry"):
+        publish(artifact_dir, registry=registry, cache_dir=tmp_path / "other-cache")
+
+
+def test_publish_keeps_a_single_latest_pointer(tmp_path: Path) -> None:
+    first = _exported(tmp_path)
+    s3 = FakeS3()
+    registry = _registry(tmp_path, s3)
+    publish(first, version="v1", registry=registry)
+    second = export_run(
+        _run_dir(tmp_path / "second", release_payload(model_id=CHECKPOINT_SHA)),
+        tmp_path / "out2",
+        version="v2",
+        converter=_fake_converter,
+    ).directory
+    publish(second, version="v2", registry=registry)
+
+    assert registry.get_meta("hopscotch-v1", "latest").version == "v2"
+    registry.set_latest("hopscotch-v1", "v1")
+    assert registry.get_meta("hopscotch-v1", "latest").version == "v1"
 
 
 # ---- commands ---------------------------------------------------------------
@@ -375,6 +528,18 @@ def _fake_checkout(tmp_path: Path) -> Path:
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "v1.py").write_text("", encoding="utf-8")
     return root
+
+
+def test_cli_publish_dry_run_needs_no_bucket(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from ml.hopscotch.cli import main
+
+    artifact_dir = _exported(tmp_path)
+    assert main(["publish", "--artifact", str(artifact_dir), "--version", "v1", "--dry-run"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["dry_run"] is True
+    assert payload["layout"] == "bundle"
+    assert set(payload["files"]) == {"model.safetensors", "config.json", "release.json", "checksums.json"}
+    assert "hopscotch-v1/v1/meta.json" in payload["keys"]
 
 
 def test_train_plan_calls_the_upstream_trainer(tmp_path: Path) -> None:

@@ -218,8 +218,7 @@ def _publish(args: argparse.Namespace) -> int:
         args.artifact,
         name=args.name,
         version=args.version,
-        s3=None if args.dry_run else _s3(),
-        bucket=args.bucket or _bucket(),
+        bucket=args.bucket,
         cache_dir=args.cache_dir,
         set_latest=not args.no_latest,
         allow_not_ready=args.allow_not_ready,
@@ -231,8 +230,10 @@ def _publish(args: argparse.Namespace) -> int:
                 "name": result.name,
                 "version": result.version,
                 "keys": list(result.keys),
+                "files": dict(result.files),
+                "layout": result.meta.layout if result.meta else "bundle",
                 "cache_dir": str(result.cache_dir) if result.cache_dir else None,
-                "dry_run": args.dry_run,
+                "dry_run": result.dry_run,
             },
             indent=2,
         )
@@ -258,18 +259,6 @@ def _verify(args: argparse.Namespace) -> int:
         )
     )
     return 0
-
-
-def _s3() -> object:
-    from .publish import s3_client
-
-    return s3_client()
-
-
-def _bucket() -> str:
-    import os
-
-    return os.environ.get("S3_BUCKET", "captcha")
 
 
 if __name__ == "__main__":
