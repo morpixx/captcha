@@ -29,6 +29,8 @@ _envelope_decoder = msgspec.msgpack.Decoder(TaskEnvelope)
 
 
 def _encode(envelope: TaskEnvelope) -> bytes:
+    # The whole envelope, never a projection: retries, lane_hops and status
+    # must survive every requeue, escalation and DLQ write unchanged.
     return _envelope_encoder.encode(envelope)
 
 
@@ -116,7 +118,9 @@ class Consumer:
         2. `read()` — XREADGROUP new entries with BLOCK + COUNT.
 
     Retry policy lives in `fail()`: ack then re-XADD with `retries += 1`, or
-    route to the dead-letter stream once `retries >= max_retries`.
+    route to the dead-letter stream once `retries >= max_retries`. The bumped
+    copy is a `msgspec.structs.replace`, so `lane_hops` and every other field
+    travel with it.
     """
 
     def __init__(
@@ -276,6 +280,8 @@ class Consumer:
                 reason=reason,
             )
             return True
+        # replace() copies every field, including lane_hops: a retried task
+        # keeps its lane-hop budget.
         bumped = msgspec.structs.replace(envelope, retries=next_retries)
         await self._r.xadd(
             self._stream,
