@@ -219,6 +219,9 @@ class FakeTracker:
         self.kill_all_calls += 1
         return 0
 
+    def rss_bytes(self) -> int:
+        return 0
+
 
 def build_worker(
     tmp_path: Path,

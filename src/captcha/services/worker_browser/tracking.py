@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from contextlib import asynccontextmanager
+import time
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 import structlog
+
+from captcha.observability import metrics
 
 log = structlog.get_logger(__name__)
 
@@ -74,6 +77,28 @@ class SessionTracker:
     def labels(self) -> tuple[str, ...]:
         return tuple(self._jobs)
 
+    def rss_bytes(self) -> int:
+        """Summed RSS of every live session's process tree. 0 when unmeasurable.
+
+        `Supervisor.processes()` may scan the process table, so the caller
+        throttles this; it runs on a task boundary, never per scrape.
+        """
+        supervisor = getattr(self._provider, "supervisor", None)
+        processes = getattr(supervisor, "processes", None)
+        if not callable(processes):
+            return 0
+        total = 0
+        for bucket in list(self._jobs.values()):
+            for job_id in bucket:
+                try:
+                    procs = processes(job_id)
+                except Exception:
+                    continue
+                for proc in procs:
+                    with suppress(Exception):
+                        total += int(proc.memory_info().rss)
+        return total
+
     async def kill_label(self, label: str) -> int:
         """Kill every session still open for `label`; returns the hit count."""
         return await self._kill(self._jobs.pop(label, set()))
@@ -109,10 +134,12 @@ class TrackingProvider:
     Everything else is delegated to the real provider.
     """
 
-    def __init__(self, inner: Any, tracker: SessionTracker) -> None:
+    def __init__(self, inner: Any, tracker: SessionTracker, *, rss_interval_sec: float = 15.0) -> None:
         self._inner = inner
         self._tracker = tracker
         self._active = 0
+        self._rss_interval = rss_interval_sec
+        self._last_rss_sample = 0.0
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
@@ -130,15 +157,31 @@ class TrackingProvider:
     @asynccontextmanager
     async def session(self, spec: Any = None):  # type: ignore[no-untyped-def]
         label = current_label()
+        started = time.perf_counter()
         cm = self._inner.session(spec) if spec is not None else self._inner.session()
         async with cm as session:
+            # Everything up to the first yield is launch (GeoIP, profile, start).
+            metrics.record_browser_launch(time.perf_counter() - started)
             job_id = getattr(session, "job_id", None)
             if job_id:
                 self._tracker.track(label, str(job_id))
             self._active += 1
+            metrics.set_browser_sessions_active(self._active)
             try:
                 yield session
             finally:
                 self._active -= 1
+                metrics.set_browser_sessions_active(self._active)
                 if job_id:
                     self._tracker.forget(label, str(job_id))
+                self._sample_rss()
+
+    def _sample_rss(self) -> None:
+        now = time.monotonic()
+        if now - self._last_rss_sample < self._rss_interval:
+            return
+        sampler = getattr(self._tracker, "rss_bytes", None)
+        if not callable(sampler):
+            return
+        self._last_rss_sample = now
+        metrics.set_browser_rss_bytes(sampler())

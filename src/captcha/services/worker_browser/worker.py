@@ -39,6 +39,7 @@ from captcha.domain import TaskEnvelope
 from captcha.domain.enums import CaptchaType
 from captcha.domain.errors import ConfigError
 from captcha.engines import global_registry as sensor_registry
+from captcha.observability import metrics
 from captcha.solvers import Solver, SolverContext
 from captcha.solvers.registry import SolverRegistry, discover_solvers, global_registry
 
@@ -332,6 +333,7 @@ class Worker:
                 killed = await self._tracker.kill_all()
                 if killed:
                     self._log.warning("browser.sessions_killed", count=killed)
+        metrics.set_browser_sessions_active(0)
         if self._owns_provider and self._provider is not None:
             with contextlib.suppress(Exception):
                 await close_provider(self._provider)
