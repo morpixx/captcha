@@ -142,10 +142,15 @@ _ROWS: tuple[TypeSpec, ...] = (
     # interactive token vendors
     _row(CaptchaType.MTCAPTCHA, "cv", "0.00150", SolutionKind.TOKEN),
     _row(CaptchaType.YIDUN, "cv", "0.00180", SolutionKind.TOKEN),
-    _row(CaptchaType.PROSOPO, "cv", "0.00100", SolutionKind.TOKEN),
-    _row(CaptchaType.CAPTCHAFOX, "cv", "0.00180", SolutionKind.TOKEN),
-    _row(CaptchaType.VK, "cv", "0.00150", SolutionKind.TOKEN),
-    _row(CaptchaType.YANDEX, "cv", "0.00150", SolutionKind.TOKEN),
+    # These three mint their token inside their own widget (signed commitment /
+    # worker proof / iframe RPC): the browser lane is the only place an answer
+    # exists, so the catalog routes them there instead of a cv worker that
+    # cannot escalate. MTCaptcha keeps the CV lane (OCR); VK keeps the HTTP lane
+    # so its legacy `sid` image branch coexists with a browser escalation.
+    _row(CaptchaType.PROSOPO, "browser", "0.00100", SolutionKind.TOKEN),
+    _row(CaptchaType.CAPTCHAFOX, "browser", "0.00180", SolutionKind.TOKEN),
+    _row(CaptchaType.VK, "http", "0.00150", SolutionKind.TOKEN),
+    _row(CaptchaType.YANDEX, "browser", "0.00150", SolutionKind.TOKEN),
     _row(CaptchaType.BINANCE, "cv", "0.00300", SolutionKind.TOKEN),
     _row(CaptchaType.CUTCAPTCHA, "cv", "0.00150", SolutionKind.TOKEN),
     _row(CaptchaType.CAPY, "cv", "0.00180", SolutionKind.TOKEN),

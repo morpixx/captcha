@@ -1,19 +1,19 @@
 """Yandex SmartCaptcha endpoints.
 
-Public docs: https://yandex.cloud/en/docs/smartcaptcha
-Cloud ingress: `smartcaptcha.yandexcloud.net/captcha.js`.
-API: `captcha-api.yandex.ru`.
+The widget loader is `captcha.js` on `smartcaptcha.yandexcloud.net` or
+`captcha-api.yandex.ru`; everything after it is iframe `postMessage` traffic
+between hashed `checkbox.<lang>.<hash>.html`, `advanced.<lang>.<hash>.html` and
+`backend.<hash>.html` documents. The token is written into the page's hidden
+`smart-token` input by `window.smartCaptcha.getResponse()` — there is no public
+HTTP call that mints it, and the hashed document names rotate with each build.
 
-Frontend tokens:
-  invisible  -> site POST body `smart-token`
-  checkbox   -> same, lower complexity
-  advanced   -> image grid click, returns `dR001:...` or similar prefix.
+That is why the solver only keeps the stable loader/origin constants and does
+the work in the browser lane.
 """
 
 from __future__ import annotations
 
-API_HOST = "captcha-api.yandex.ru"
-CHALLENGE = "https://captcha-api.yandex.ru/captcha.js"  # loader
-PICTURE = "https://captcha-api.yandex.ru/image"  # image bytes
-CHECK = "https://captcha-api.yandex.ru/check"
-VALIDATE = "https://captcha-api.yandex.ru/validate"  # 2nd stage
+WIDGET = "https://smartcaptcha.yandexcloud.net/captcha.js"
+ORIGIN = "https://captcha-api.yandex.ru"
+#: Second supported loader origin (the widget regexp accepts either).
+ORIGIN_ALT = "https://smartcaptcha.yandexcloud.net"
