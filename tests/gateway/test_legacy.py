@@ -107,9 +107,78 @@ def test_userrecaptcha_payload_keeps_legacy_fields() -> None:
     assert payload["action"] == "login"
     assert payload["cdata"] == "extra"
     assert payload["pageurl"] == PAGE
-    assert payload["proxy"] == "host:1"
+    # proxytypeaddr="HTTP" supplies the scheme; the stored URL is canonical.
+    assert payload["proxy"] == "http://host:1"
     assert payload["proxy_type"] == "HTTP"
     assert payload["lang"] == "en"
+
+
+def test_legacy_proxy_type_qualifies_the_address() -> None:
+    request = parse_in_request(
+        {
+            "method": "hcaptcha",
+            "sitekey": "sk",
+            "pageurl": PAGE,
+            "proxy": "user:pass@10.0.0.5:1080",
+            "proxytype": "SOCKS5",
+        }
+    )
+    assert request.payload["proxy"] == "socks5://user:pass@10.0.0.5:1080"
+    assert request.payload["proxy_type"] == "SOCKS5"
+
+
+def test_legacy_proxytypeaddr_carries_the_whole_endpoint() -> None:
+    request = parse_in_request(
+        {
+            "method": "hcaptcha",
+            "sitekey": "sk",
+            "pageurl": PAGE,
+            "proxytypeaddr": "SOCKS4:10.0.0.5:4145",
+        }
+    )
+    assert request.payload["proxy"] == "socks4://10.0.0.5:4145"
+
+
+def test_legacy_bad_proxy_is_bad_parameters() -> None:
+    with pytest.raises(LegacyError) as caught:
+        parse_in_request(
+            {"method": "hcaptcha", "sitekey": "sk", "pageurl": PAGE, "proxy": "10.0.0.5:81", "proxytype": "FTP"}
+        )
+    assert caught.value.code == ERROR_BAD_PARAMETERS
+
+
+def test_hcaptcha_enterprise_switches_type_and_keeps_extras() -> None:
+    request = parse_in_request(
+        {
+            "method": "hcaptcha",
+            "sitekey": "sk",
+            "pageurl": PAGE,
+            "enterprise": "1",
+            "invisible": "1",
+            "rqdata": "rq-1",
+            "host": "example.com",
+            "cookies": "session=abc; cf_clearance=def",
+            "userAgent": "UA",
+        }
+    )
+    assert request.captcha_type is CaptchaType.HCAPTCHA_ENTERPRISE
+    payload = request.payload
+    assert payload["enterprise"] is True
+    assert payload["invisible"] is True
+    assert payload["rqdata"] == "rq-1"
+    assert payload["host"] == "example.com"
+    assert payload["cookies"] == [
+        {"name": "session", "value": "abc"},
+        {"name": "cf_clearance", "value": "def"},
+    ]
+    assert payload["user_agent"] == "UA"
+
+
+def test_hcaptcha_invisible_without_enterprise_stays_plain() -> None:
+    request = parse_in_request({"method": "hcaptcha", "sitekey": "sk", "pageurl": PAGE, "isInvisible": "true"})
+    assert request.captcha_type is CaptchaType.HCAPTCHA
+    assert request.payload["invisible"] is True
+    assert "enterprise" not in request.payload
 
 
 def test_amazon_waf_accepts_flat_fields_without_data() -> None:

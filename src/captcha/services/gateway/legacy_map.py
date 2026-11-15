@@ -17,6 +17,12 @@ from typing import Any
 
 from captcha.domain.catalog import SolutionKind, solution_kind
 from captcha.domain.enums import CaptchaType
+from captcha.services.gateway.type_map import (
+    PROXY_SCHEMES,
+    ProxyFormatError,
+    normalize_cookies,
+    normalize_proxy_string,
+)
 
 # The only two protocol errors this layer raises. Auth, balance and type errors
 # already have public envelopes by the time the router calls in here.
@@ -96,20 +102,51 @@ def _as_text(value: Any) -> str | None:
     return None if value is None else str(value).strip() or None
 
 
+def _proxy_url(params: dict[str, str]) -> str | None:
+    """The single proxy URL the workers read, built from the legacy fields.
+
+    /in.php sends the address in `proxy` (login:password@host:port) and the
+    scheme in `proxytype`; older clients bake the scheme into
+    `proxytypeaddr` (either "HTTP" alone or "HTTP:host:port"). Without this
+    composition a SOCKS5 proxy silently went out over HTTP, because the
+    transport only ever saw the bare address.
+    """
+    scheme = _get(params, "proxytype")
+    raw = _get(params, "proxy")
+    combined = _get(params, "proxytypeaddr")
+    if combined is not None:
+        head, separator, tail = combined.partition(":")
+        if separator and tail and head.strip().lower() in PROXY_SCHEMES:
+            scheme = scheme or head
+            raw = raw or tail
+        elif scheme is None and combined.strip().lower() in PROXY_SCHEMES:
+            scheme = combined
+    if raw is None:
+        return None
+    try:
+        return normalize_proxy_string(raw, default_scheme=scheme)
+    except ProxyFormatError as exc:
+        raise LegacyError(ERROR_BAD_PARAMETERS, f"proxy: {exc}") from None
+
+
 def _common(params: dict[str, str]) -> dict[str, Any]:
     """Fields every method carries when present: page, UA, proxy, language."""
     payload: dict[str, Any] = {}
     for source, target in (
         ("pageurl", "pageurl"),
         ("userAgent", "user_agent"),
-        ("proxy", "proxy"),
-        ("proxytypeaddr", "proxy_type"),
         ("lang", "lang"),
         ("soft_id", "soft_id"),
     ):
         value = _get(params, source)
         if value is not None:
             payload[target] = value
+    proxy_type = _get(params, "proxytype") or _get(params, "proxytypeaddr")
+    if proxy_type is not None:
+        payload["proxy_type"] = proxy_type
+    proxy_url = _proxy_url(params)
+    if proxy_url is not None:
+        payload["proxy"] = proxy_url
     return payload
 
 
@@ -264,11 +301,39 @@ def _altcha(params: dict[str, str]) -> InRequest:
     return _finish(params, CaptchaType.ALTCHA, payload, sitekey=sitekey, site_url=pageurl)
 
 
+def _hcaptcha(params: dict[str, str]) -> InRequest:
+    """hCaptcha, including the enterprise and invisible variants.
+
+    `enterprise=1` switches the type (there is no enterprise flag inside
+    HCaptchaTask in 2captcha's model); `invisible`/`isInvisible` stays a
+    payload flag. `rqdata` is the enterprise blob the browser lane needs;
+    `cookies` and `host` go through untouched.
+    """
+    sitekey = _require(params, "sitekey")
+    pageurl = _require(params, "pageurl")
+    enterprise = _flag(params, "enterprise")
+    invisible = _flag(params, "invisible") or _flag(params, "isInvisible")
+
+    payload = _common(params)
+    payload["sitekey"] = sitekey
+    _put(payload, params, "host", "rqdata")
+    if enterprise:
+        payload["enterprise"] = True
+    if invisible:
+        payload["invisible"] = True
+    cookies = _get(params, "cookies")
+    if cookies is not None:
+        payload["cookies"] = normalize_cookies(cookies)
+
+    captcha_type = CaptchaType.HCAPTCHA_ENTERPRISE if enterprise else CaptchaType.HCAPTCHA
+    return _finish(params, captcha_type, payload, sitekey=sitekey, site_url=pageurl)
+
+
 # Simple methods are just the shared shapes with their type filled in.
 _FRIENDLY_EXTRAS = ("puzzle", "signature", "salt", "difficulty", "workers")
 _PARSERS = {
     "userrecaptcha": _userrecaptcha,
-    "hcaptcha": partial(_sitekey_method, captcha_type=CaptchaType.HCAPTCHA, extras=("host",)),
+    "hcaptcha": _hcaptcha,
     "turnstile": partial(_sitekey_method, captcha_type=CaptchaType.TURNSTILE, extras=("action", "cdata")),
     "funcaptcha": _funcaptcha,
     "geetest": _geetest,
