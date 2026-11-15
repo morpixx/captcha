@@ -50,7 +50,21 @@ dependencies = [
 
 [project.optional-dependencies]
 # heavy, only for the cv lane and browser fallback
-cv = ["torch>=2.4", "torchvision>=0.19", "opencv-python-headless>=4.10", "soundfile>=0.12"]
+cv = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "opencv-python-headless>=4.10",
+    "soundfile>=0.12",
+    # safetensors heads: classification/head.py, rotate/hopscotch artifacts
+    # (adapters/weights/loaders.py:load_safetensors)
+    "safetensors>=0.4",
+    # ONNX runtime for rotate-v1.onnx and the RT-DETR detector path
+    # (solvers/detection/onnx_detector.py, solvers/rotate/regressor.py)
+    "onnxruntime>=1.19",
+    # HF backbone/processor for the frozen ViT feature extractor
+    # (solvers/classification/backbone.py, adapters/weights/loaders.py:load_hf)
+    "transformers>=4.45",
+]
 dev = [
     "ruff>=0.7",
     "mypy>=1.13",

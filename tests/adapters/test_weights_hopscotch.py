@@ -19,6 +19,7 @@ from botocore.exceptions import ClientError
 
 from captcha.adapters.weights import Registry
 from captcha.adapters.weights.artifact import HOPSCOTCH_V1, SPECS, spec_for
+from captcha.adapters.weights.meta import ModelMeta, encode_meta
 from captcha.domain.errors import ConfigError, ModelInferenceError
 
 BUCKET = "models"
@@ -41,13 +42,14 @@ class _Paginator:
         self._objects = objects
 
     def paginate(self, *, Bucket: str, Prefix: str = "", Delimiter: str = "") -> list[dict[str, Any]]:
+        keys = sorted(key for key in self._objects if key.startswith(Prefix))
+        if not Delimiter:
+            return [{"Contents": [{"Key": key, "Size": len(self._objects[key])} for key in keys]}]
         prefixes: set[str] = set()
-        for key in self._objects:
-            if not key.startswith(Prefix):
-                continue
+        for key in keys:
             tail = key[len(Prefix) :]
-            if "/" in tail:
-                prefixes.add(f"{Prefix}{tail.split('/', 1)[0]}/")
+            if Delimiter in tail:
+                prefixes.add(f"{Prefix}{tail.split(Delimiter, 1)[0]}{Delimiter}")
         return [{"CommonPrefixes": [{"Prefix": p} for p in sorted(prefixes)]}]
 
 
@@ -255,7 +257,8 @@ def test_check_artifact_rejects_single_file_layout(tmp_path: Path) -> None:
     check = registry.check_artifact("rotate-v1", "v1")
 
     assert not check.ok
-    assert any("expected bundle" in f for f in check.failures)
+    assert any("not a bundle" in f for f in check.failures)
+    assert check.files == []
 
 
 # ---- fetch -----------------------------------------------------------------
@@ -299,6 +302,92 @@ def test_download_of_a_bundle_returns_the_primary_file(tmp_path: Path) -> None:
     assert path.name == "model.safetensors"
     assert path.parent.name == VERSION
     assert not list(path.parent.glob("*.part"))
+
+
+def test_publish_keeps_optional_checksums_sidecar(tmp_path: Path) -> None:
+    s3 = FakeS3()
+    registry = _registry(tmp_path, s3)
+    bundle = _bundle_dir(tmp_path)
+    (bundle / "checksums.json").write_text('{"model.safetensors": "abc"}', encoding="utf-8")
+
+    meta = registry.publish_artifact(NAME, VERSION, bundle)
+
+    assert set(meta.files) == {"model.safetensors", "config.json", "release.json", "checksums.json"}
+    assert s3.objects[f"{NAME}/{VERSION}/checksums.json"] == b'{"model.safetensors": "abc"}'
+
+    check = registry.check_artifact(NAME, VERSION)
+    assert check.ok, check.failures
+    sidecar = next(f for f in check.files if f.name == "checksums.json")
+    assert sidecar.ok
+    assert "optional file" in sidecar.note
+    assert check.extra_files == []
+
+
+# ---- manifest-less bundles (hopscotch training kit) ------------------------
+
+
+def _publish_manifestless(s3: FakeS3, tmp_path: Path) -> ModelMeta:
+    """What ml/hopscotch/publish.py writes: no layout, no per-file manifest."""
+    bundle = _bundle_dir(tmp_path)
+    weights = (bundle / "model.safetensors").read_bytes()
+    meta = ModelMeta(
+        name=NAME,
+        version=VERSION,
+        framework="safetensors",
+        s3_key=f"{NAME}/{VERSION}/model.safetensors",
+        sha256=_sha(weights),
+        size_bytes=len(weights),
+    )
+    s3.objects[f"{NAME}/{VERSION}/model.safetensors"] = weights
+    s3.objects[f"{NAME}/{VERSION}/config.json"] = (bundle / "config.json").read_bytes()
+    s3.objects[f"{NAME}/{VERSION}/release.json"] = (bundle / "release.json").read_bytes()
+    s3.objects[f"{NAME}/{VERSION}/checksums.json"] = b'{"model.safetensors": "x"}'
+    s3.objects[f"{NAME}/{VERSION}/meta.json"] = encode_meta(meta)
+    s3.objects[f"{NAME}/latest"] = VERSION.encode()
+    return meta
+
+
+def test_check_artifact_accepts_manifestless_bundle(tmp_path: Path) -> None:
+    s3 = FakeS3()
+    registry = _registry(tmp_path, s3)
+    _publish_manifestless(s3, tmp_path)
+
+    check = registry.check_artifact(NAME)
+
+    assert check.ok, check.failures
+    assert check.manifest_present is False
+    assert [f.name for f in check.files] == ["config.json", "model.safetensors", "release.json"]
+    assert all(f.ok for f in check.files)
+    assert check.files[0].expected_sha256 == ""
+    assert "no manifest entry" in check.files[0].note
+    assert check.config["hidden_size"] == 768, "sidecars are still parsed"
+    assert check.extra_files == ["checksums.json"]
+    assert any("no file manifest" in w for w in check.warnings)
+
+
+def test_check_artifact_manifestless_verifies_the_primary_digest(tmp_path: Path) -> None:
+    s3 = FakeS3()
+    registry = _registry(tmp_path, s3)
+    _publish_manifestless(s3, tmp_path)
+    s3.objects[f"{NAME}/{VERSION}/model.safetensors"] += b"evil"
+
+    check = registry.check_artifact(NAME)
+
+    assert not check.ok
+    assert any("model.safetensors" in f and "sha256 mismatch" in f for f in check.failures)
+
+
+def test_check_artifact_manifestless_flags_a_missing_sidecar(tmp_path: Path) -> None:
+    s3 = FakeS3()
+    registry = _registry(tmp_path, s3)
+    _publish_manifestless(s3, tmp_path)
+    del s3.objects[f"{NAME}/{VERSION}/config.json"]
+
+    check = registry.check_artifact(NAME)
+
+    assert not check.ok
+    assert any(f.startswith("config.json") for f in check.failures)
+    assert not next(f for f in check.files if f.name == "config.json").ok
 
 
 # ---- latest / regressions --------------------------------------------------

@@ -176,7 +176,7 @@ class Registry:
         source: str | Path | Mapping[str, bytes | Path | str],
         *,
         artifact: str | None = None,
-        labels: dict[str, str] | None = None,
+        labels: Mapping[str, Any] | None = None,
         input_schema: dict[str, Any] | None = None,
         output_schema: dict[str, Any] | None = None,
         canary_rollout: float = 0.0,

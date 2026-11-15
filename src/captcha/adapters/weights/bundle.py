@@ -3,6 +3,12 @@
 Every file carries its own sha256 in meta.json, so a half-published or partially
 overwritten artifact fails loudly instead of loading wrong weights. check() is
 the whole-bundle version of what download() does for a single blob.
+
+Artifacts published by the hopscotch training kit (ml/hopscotch/publish.py) have
+no manifest: meta.json only names the weights. check() still verifies those -
+primary sha256 from meta.json, sidecars for presence and JSON shape - and says so
+in warnings, so "publish through Registry.publish_artifact to get per-file
+sha256" is visible in the report instead of being a silent gap.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from .artifact import (
     Artifact,
     ArtifactCheck,
     FileCheck,
+    is_bundle,
     json_object,
     load_json_object,
     read_bundle,
@@ -64,7 +71,7 @@ class BundleStore:
         source: str | Path | Mapping[str, bytes | Path | str],
         *,
         artifact: str | None = None,
-        labels: Mapping[str, str] | None = None,
+        labels: Mapping[str, Any] | None = None,
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
         canary_rollout: float = 0.0,
@@ -76,8 +83,10 @@ class BundleStore:
         validate_bundle(payload, spec)
 
         prefix = f"{name}/{version}"
-        digests = {fname: hashlib.sha256(blob).hexdigest() for fname, blob in payload.items()}
-        for fname in spec.files:
+        extra = [f for f in spec.optional_files if f in payload]
+        shipped = (*spec.files, *extra)
+        digests = {fname: hashlib.sha256(payload[fname]).hexdigest() for fname in shipped}
+        for fname in shipped:
             self._put(f"{prefix}/{fname}", payload[fname])
 
         meta = ModelMeta(
@@ -89,7 +98,7 @@ class BundleStore:
             size_bytes=len(payload[spec.primary]),
             layout="bundle",
             artifact=spec.artifact,
-            files={fname: digests[fname] for fname in spec.files},
+            files=dict(digests),
             input_schema=dict(input_schema or {}),
             output_schema=dict(output_schema or {}),
             labels=dict(labels or {}),
@@ -120,7 +129,7 @@ class BundleStore:
 
         dest = self.cache_dir / meta.name / meta.version
         dest.mkdir(parents=True, exist_ok=True)
-        paths = {fname: self._fetch_one(meta, fname, dest / fname, declared[fname], force=force) for fname in declared}
+        paths = {fname: self.fetch_one(meta, fname, dest / fname, declared[fname], force=force) for fname in declared}
         return Artifact(
             name=meta.name,
             version=meta.version,
@@ -139,39 +148,56 @@ class BundleStore:
         except CaptchaError as exc:
             return ArtifactCheck(name=name, version=version, ok=False, failures=[f"meta.json: {exc}"])
 
-        failures: list[str] = []
-        if meta.layout != "bundle":
-            failures.append(f"layout is {meta.layout!r}, expected bundle")
-        spec = SPECS.get(meta.artifact or name)
-        if spec is not None:
-            absent = [f for f in spec.files if f not in meta.files]
-            if absent:
-                failures.append(f"manifest is missing {', '.join(absent)}")
-
         declared = dict(meta.files)
+        if not is_bundle(meta):
+            return ArtifactCheck(
+                name=meta.name,
+                version=meta.version,
+                ok=False,
+                meta=meta,
+                failures=[f"not a bundle: layout={meta.layout!r}, primary={meta.s3_key}"],
+                manifest_present=bool(declared),
+            )
+
+        primary = Path(meta.s3_key).name
+        spec = SPECS.get(meta.artifact or name)
+        required = list(spec.files) if spec is not None else [primary]
+        failures: list[str] = []
+        warnings: list[str] = []
+        if not declared:
+            warnings.append("meta.json carries no file manifest: sidecar sha256 cannot be verified")
+            warnings.append("publish via Registry.publish_artifact to get per-file sha256")
+
         dest = self.cache_dir / meta.name / meta.version
         dest.mkdir(parents=True, exist_ok=True)
         checks: list[FileCheck] = []
         parsed: dict[str, Any] = {}
-        for fname in sorted(declared):
-            item = FileCheck(name=fname, expected_sha256=declared[fname])
+        for fname in sorted(set(required) | set(declared)):
+            expected = declared.get(fname, "") or (meta.sha256 if fname == primary else "")
+            item = FileCheck(name=fname, expected_sha256=expected)
             try:
-                path = self._fetch_one(meta, fname, dest / fname, declared[fname], force=force)
+                path = self.fetch_one(meta, fname, dest / fname, expected, force=force)
             except CaptchaError as exc:
                 item.error = str(exc)
                 failures.append(f"{fname}: {exc}")
             else:
                 item.actual_sha256 = sha256_file(path)
                 item.size_bytes = path.stat().st_size
-                item.ok = item.actual_sha256 == declared[fname]
-                if not item.ok:
+                item.ok = True
+                if expected and item.actual_sha256 != expected:
+                    item.ok = False
                     failures.append(f"{fname}: sha256 mismatch")
+                elif not expected:
+                    item.note = "no manifest entry: sha256 not verifiable"
                 if fname.endswith(".json"):
                     try:
                         parsed[fname] = json_object(path.read_bytes(), fname)
                     except ConfigError as exc:
                         item.ok = False
                         failures.append(f"{fname}: {exc}")
+                if fname not in required:
+                    kind = "optional file" if spec is not None and fname in spec.optional_files else "extra file"
+                    item.note = (item.note + " " if item.note else "") + f"{kind}, not required"
             checks.append(item)
 
         return ArtifactCheck(
@@ -180,13 +206,17 @@ class BundleStore:
             ok=not failures,
             meta=meta,
             failures=failures,
+            warnings=warnings,
             files=checks,
+            extra_files=self._list_extra(meta, set(declared) | set(required), warnings),
             config=parsed.get("config.json", {}),
             release=parsed.get("release.json", {}),
+            manifest_present=bool(declared),
         )
 
-    def _fetch_one(self, meta: ModelMeta, fname: str, local: Path, want: str, *, force: bool) -> Path:
-        if not force and local.exists() and sha256_file(local) == want:
+    def fetch_one(self, meta: ModelMeta, fname: str, local: Path, want: str, *, force: bool) -> Path:
+        """Download one bundle file; verify sha256 when a digest is known."""
+        if not force and local.exists() and (not want or sha256_file(local) == want):
             return local
         key = f"{meta.name}/{meta.version}/{fname}"
         buf = io.BytesIO()
@@ -196,7 +226,7 @@ class BundleStore:
             raise ConfigError(f"bundle download failed: {key}", context={"key": key}) from exc
         blob = buf.getvalue()
         got = hashlib.sha256(blob).hexdigest()
-        if got != want:
+        if want and got != want:
             raise ModelInferenceError(
                 "sha256 mismatch after download",
                 context={"key": key, "expected": want, "got": got},
@@ -205,6 +235,22 @@ class BundleStore:
         tmp.write_bytes(blob)
         tmp.replace(local)
         return local
+
+    def _list_extra(self, meta: ModelMeta, verified: set[str], warnings: list[str]) -> list[str]:
+        """Objects under the artifact prefix that check() did not look at."""
+        prefix = f"{meta.name}/{meta.version}/"
+        try:
+            paginator = self._s3.get_paginator("list_objects_v2")
+            present: set[str] = set()
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                for obj in page.get("Contents") or ():
+                    tail = str(obj.get("Key", ""))[len(prefix) :]
+                    if tail and "/" not in tail and tail != BUNDLE_META_FILE:
+                        present.add(tail)
+        except (BotoCoreError, ClientError) as exc:
+            warnings.append(f"cannot list {prefix}: {exc}")
+            return []
+        return sorted(present - verified)
 
     def _put(self, key: str, blob: bytes) -> None:
         try:

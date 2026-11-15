@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .artifact import HOPSCOTCH_V1, SPECS, Artifact, ArtifactCheck, ArtifactSpec, FileCheck
+from .artifact import HOPSCOTCH_V1, SPECS, Artifact, ArtifactCheck, ArtifactSpec, FileCheck, is_bundle
 from .loaders import load_hf, load_onnx, load_safetensors, load_torch
 from .meta import ModelMeta, decode_meta, encode_meta
 from .s3_registry import Registry
@@ -42,6 +42,7 @@ __all__ = [
     "Registry",
     "decode_meta",
     "encode_meta",
+    "is_bundle",
     "load_hf",
     "load_model",
     "load_onnx",

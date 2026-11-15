@@ -17,12 +17,17 @@ import argparse
 import asyncio
 import secrets
 import sys
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from captcha.adapters.storage import AccountRepo, init_engine, shutdown_engine
 from captcha.adapters.storage.engine import async_session
 from captcha.config import get_settings
+
+if TYPE_CHECKING:
+    from captcha.adapters.weights import ArtifactCheck
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "adapters" / "storage" / "alembic.ini"
 
@@ -122,19 +127,46 @@ def cmd_balance(args: argparse.Namespace) -> int:
     return 0
 
 
+@dataclass(frozen=True, slots=True)
+class ModelExpectation:
+    """What a training run has to hand over for one artifact name.
+
+    layout="bundle" means the bucket entry is a directory
+    (<name>/<version>/{...}), not a single weights blob; files is the exact set
+    publish-model has to upload and check-model has to find.
+    """
+
+    contract: str
+    serves: str
+    layout: Literal["single", "bundle"] = "single"
+    files: tuple[str, ...] = ()
+
+
+HOPSCOTCH_FILES = ("model.safetensors", "config.json", "release.json")
+
 #: Every artifact name hard-coded in a solver. Kept here so the training side
 #: has one checklist of what "plug the model in" actually means.
-EXPECTED_MODELS: dict[str, tuple[str, str]] = {
-    "rotate-v1": ("ResNet50 state_dict, fc -> 2 (sin, cos)", "rotate, captchafox"),
-    "click-v1": ("YOLO detector, classes = object names", "click, coordinates, hunt, basilisk, atb, mtcaptcha, yidun, tencent"),
-    "bbox-v1": ("YOLO detector", "bounding_box"),
-    "drag-v1": ("YOLO detector, source + destination classes", "drag_drop"),
-    "draw-v1": ("YOLO detector", "draw_around"),
-    "hcaptcha-v1": ("safetensors: classifier.weight/bias + meta.json labels", "hcaptcha, hcaptcha_enterprise, classification_grid"),
-    "recaptcha-v1": ("safetensors head", "recaptcha_v2 grid, classification_grid"),
-    "funcap-v1": ("safetensors head, 2x3 grid", "funcaptcha, funcaptcha_enterprise"),
-    "awswaf-v1": ("safetensors head", "awswaf"),
-    "shein-v1": ("safetensors head", "shein"),
+EXPECTED_MODELS: dict[str, ModelExpectation] = {
+    "rotate-v1": ModelExpectation("ResNet50 state_dict, fc -> 2 (sin, cos)", "rotate, captchafox"),
+    "click-v1": ModelExpectation(
+        "YOLO detector, classes = object names", "click, coordinates, hunt, basilisk, atb, mtcaptcha, yidun, tencent"
+    ),
+    "bbox-v1": ModelExpectation("YOLO detector", "bounding_box"),
+    "drag-v1": ModelExpectation("YOLO detector, source + destination classes", "drag_drop"),
+    "draw-v1": ModelExpectation("YOLO detector", "draw_around"),
+    "hcaptcha-v1": ModelExpectation(
+        "safetensors: classifier.weight/bias + meta.json labels", "hcaptcha, hcaptcha_enterprise, classification_grid"
+    ),
+    "recaptcha-v1": ModelExpectation("safetensors head", "recaptcha_v2 grid, classification_grid"),
+    "funcap-v1": ModelExpectation("safetensors head, 2x3 grid", "funcaptcha, funcaptcha_enterprise"),
+    "awswaf-v1": ModelExpectation("safetensors head", "awswaf"),
+    "shein-v1": ModelExpectation("safetensors head", "shein"),
+    "hopscotch-v1": ModelExpectation(
+        "bundle: DINOv3 ViT-B/16 detector + query head; release.json carries calibration/rejector",
+        "hopscotch",
+        layout="bundle",
+        files=HOPSCOTCH_FILES,
+    ),
 }
 
 
@@ -204,7 +236,22 @@ def cmd_list_models(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_bundle_check(check: ArtifactCheck) -> None:
+    for item in check.files:
+        mark = "ok  " if item.ok else "FAIL"
+        detail = item.error or item.note
+        digest = item.actual_sha256[:12] if item.actual_sha256 else "-"
+        line = f"  {mark} {item.name:<18} {item.size_bytes:>10} B  {digest:<12} {detail}"
+        print(line.rstrip())
+    if check.extra_files:
+        print(f"  extra  {', '.join(check.extra_files)} (present, not part of the contract)")
+    for warning in check.warnings:
+        print(f"  note  {warning}")
+
+
 def cmd_check_model(args: argparse.Namespace) -> int:
+    from captcha.adapters.weights import is_bundle
+
     registry = _weights_registry()
     try:
         meta = registry.get_meta(args.name, args.version)
@@ -216,24 +263,44 @@ def cmd_check_model(args: argparse.Namespace) -> int:
     print(f"s3_key   {meta.s3_key}")
     if meta.labels:
         print(f"labels   {meta.labels}")
-    try:
-        path = registry.download(args.name, args.version, force=True)
-    except Exception as exc:
-        print(f"download/verify failed: {exc}", file=sys.stderr)
-        return 1
-    print(f"verified {path}")
+
+    if is_bundle(meta):
+        # A bundle is only "there" if every file is: verify the whole directory,
+        # not just the weights blob download() would return.
+        try:
+            check = registry.check_artifact(args.name, meta.version)
+        except Exception as exc:
+            print(f"bundle check failed: {exc}", file=sys.stderr)
+            return 1
+        artifact_id = (check.meta.artifact if check.meta else "") or args.name
+        print(f"layout   bundle  artifact={artifact_id}")
+        _print_bundle_check(check)
+        if not check.ok:
+            for failure in check.failures:
+                print(f"check failed: {failure}", file=sys.stderr)
+            return 1
+        verified = sum(1 for item in check.files if item.ok)
+        print(f"bundle   ok  files={verified}/{len(check.files)}")
+    else:
+        try:
+            path = registry.download(args.name, args.version, force=True)
+        except Exception as exc:
+            print(f"download/verify failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"verified {path}")
 
     if not args.load:
         return 0
     try:
+        # load exactly the version that was just verified, not the 'latest' alias
         if meta.framework == "torch":
-            registry.load_pytorch(args.name, args.version)
+            registry.load_pytorch(args.name, meta.version)
         elif meta.framework == "safetensors":
-            registry.load_safetensors(args.name, args.version)
+            registry.load_safetensors(args.name, meta.version)
         elif meta.framework == "onnx":
-            registry.load_onnx(args.name, args.version)
+            registry.load_onnx(args.name, meta.version)
         elif meta.framework == "hf":
-            registry.load_hf(args.name, args.version)
+            registry.load_hf(args.name, meta.version)
         else:
             print("framework 'raw': nothing to load")
             return 0
@@ -311,10 +378,13 @@ def _legacy_method(captcha_type: str) -> str:
 
 
 def cmd_expected_models(_args: argparse.Namespace) -> int:
-    for name, (contract, serves) in EXPECTED_MODELS.items():
+    for name, expectation in EXPECTED_MODELS.items():
         print(f"{name}")
-        print(f"  format  {contract}")
-        print(f"  serves  {serves}")
+        print(f"  format  {expectation.contract}")
+        print(f"  serves  {expectation.serves}")
+        print(f"  layout  {expectation.layout}")
+        if expectation.files:
+            print(f"  files   {', '.join(expectation.files)}")
     return 0
 
 
