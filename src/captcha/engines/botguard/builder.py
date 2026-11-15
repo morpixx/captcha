@@ -15,6 +15,7 @@ token on every retry and make replay impossible.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -31,7 +32,10 @@ RECAPTCHA_USERVERIFY_URL: str = "https://www.google.com/recaptcha/api2/userverif
 #: Google Web Anti-Abuse API (public, documented by luanrt/bgutils).
 WAA_CREATE_URL: str = "https://jnn-pa.googleapis.com/$rpc/google.internal.waa.v1.Waa/Create"
 WAA_GENERATE_IT_URL: str = "https://jnn-pa.googleapis.com/$rpc/google.internal.waa.v1.Waa/GenerateIT"
-WAA_API_KEY: str = "AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw"
+#: WAA key is public (served by google.com on every page), but keeping it in
+#: source triggers GitHub secret-scanning on every clone. Read from env; the
+#: solver must refuse the task when it is empty rather than fall back silently.
+WAA_API_KEY: str = os.environ.get("BOTGUARD_WAA_API_KEY", "")
 
 #: Interpreter scripts are served from the Google host the challenge named.
 GOOGLE_HOST: str = "https://www.google.com"
