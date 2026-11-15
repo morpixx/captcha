@@ -1,0 +1,16 @@
+{
+  "name": "altcha_v1",
+  "task": {
+    "type": "altcha",
+    "algorithm": "SHA-256",
+    "challenge": "aba3677b4a3e9233656758614dc3476468eea94ab016dd433f4a3ccee77eba25",
+    "maxnumber": 5000,
+    "salt": "canary-salt&",
+    "signature": "dbdcce0e83381139fa8ee1a74c011c830eb6a69b4f2c5dd5333f270d42898e3f"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["data"]
+  },
+  "note": "altcha-lib v1 SHA-256, answer 1337, maxnumber 5000. Token is base64(JSON)."
+}

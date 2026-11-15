@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     gateway_host: str = Field(default="0.0.0.0", alias="CAPTCHA_GATEWAY_HOST")
     gateway_port: int = Field(default=8080, alias="CAPTCHA_GATEWAY_PORT")
     gateway_workers: int = Field(default=4, alias="CAPTCHA_GATEWAY_WORKERS")
+    # Contract §7 freezes ALLOW_EXPERIMENTAL_TASKS=0 for production. The current
+    # beta ships it as True so the 41 experimental solvers stay sellable; this
+    # is a deliberate, temporary divergence — set it to 0 to restore §7.
+    allow_experimental_tasks: bool = Field(default=True, alias="ALLOW_EXPERIMENTAL_TASKS")
 
     # redis
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")

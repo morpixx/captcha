@@ -82,13 +82,16 @@ def test_canary_type_health_sets_both_gauges() -> None:
 
 def test_browser_helpers_publish_reported_values() -> None:
     # The gauges/histogram exist for worker-browser; nothing here invents data.
+    # The registry is process-global, and tests/services/test_worker_browser
+    # launches sessions before this file runs — assert the delta, not a total.
+    launches_before = metrics.REGISTRY.get_sample_value("captcha_browser_launch_seconds_count") or 0.0
     metrics.record_browser_launch(2.5)
     metrics.set_browser_sessions_active(3)
     metrics.set_browser_rss_bytes(1024 * 1024 * 700)
 
     assert metrics.REGISTRY.get_sample_value("captcha_browser_sessions_active") == 3.0
     assert metrics.REGISTRY.get_sample_value("captcha_browser_rss_bytes") == 734003200.0
-    assert metrics.REGISTRY.get_sample_value("captcha_browser_launch_seconds_count") == 1.0
+    assert metrics.REGISTRY.get_sample_value("captcha_browser_launch_seconds_count") == launches_before + 1
 
 
 # ------------------------------------------------------------------- readiness
