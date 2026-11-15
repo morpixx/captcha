@@ -76,7 +76,15 @@ def resolve_endpoint(settings: Any, payload: dict[str, Any]) -> str:
     override = payload.get("endpoint")
     if isinstance(override, str) and override.strip():
         override = validate_endpoint(override.strip())
-        if configured and _origin(override) != _origin(configured):
+        if not configured:
+            # Without a configured origin there is nothing to compare the
+            # override against, and a client-supplied host would turn the
+            # solver into an SSRF sink (or ship the settings api_key to it).
+            raise ConfigError(
+                "text_captcha: per-task endpoint override requires LLM_ENDPOINT to be configured",
+                context={"override": _origin(override)},
+            )
+        if _origin(override) != _origin(configured):
             raise ConfigError(
                 "text_captcha: per-task endpoint override must match LLM_ENDPOINT",
                 context={"configured": _origin(configured), "override": _origin(override)},

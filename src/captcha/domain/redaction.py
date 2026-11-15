@@ -1,9 +1,11 @@
 """Redaction of task secrets before they are persisted or dead-lettered.
 
-Two consumers, one implementation:
+Three consumers, one implementation:
 
 - the gateway strips proxy/cookie fields from the Postgres copy of a payload;
-- the queue adapter strips them from anything written to the dead-letter stream.
+- the queue adapter strips them from anything written to the dead-letter stream;
+- `redact_dsn` keeps datastore passwords out of log lines when a worker prints
+  the Redis/Postgres URL it connected to.
 
 Pure dict work, no I/O, stdlib + msgspec only — the adapter may not import the
 services layer, so the helper lives in domain where both can reach it.
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import msgspec
 
@@ -67,4 +70,39 @@ def redact_envelope(envelope: TaskEnvelope) -> TaskEnvelope:
     return msgspec.structs.replace(envelope, task=task)
 
 
-__all__ = ["SENSITIVE_KEYS", "SENSITIVE_PREFIXES", "is_sensitive_key", "redact_envelope", "redact_payload"]
+def redact_dsn(url: str | None) -> str:
+    """A connection URL with its userinfo and query stripped, for log lines.
+
+    `redis://:secret@cache:6379/0` becomes `redis://***@cache:6379/0`; the path
+    (database name) survives, the password and every query parameter do not. A
+    string that is not a scheme://host URL is replaced with `***` rather than
+    logged, because there is no safe way to tell where its secret is.
+    """
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(str(url))
+    except ValueError:
+        return "***"
+    if not parts.scheme or not parts.hostname:
+        return "***"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    hostname = parts.hostname
+    if ":" in hostname:  # IPv6 literal: keep the brackets so the line stays parseable
+        hostname = f"[{hostname}]"
+    host = f"{hostname}:{port}" if port else hostname
+    userinfo = "***@" if (parts.username is not None or parts.password is not None) else ""
+    return f"{parts.scheme}://{userinfo}{host}{parts.path}"
+
+
+__all__ = [
+    "SENSITIVE_KEYS",
+    "SENSITIVE_PREFIXES",
+    "is_sensitive_key",
+    "redact_dsn",
+    "redact_envelope",
+    "redact_payload",
+]

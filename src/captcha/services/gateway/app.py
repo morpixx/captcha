@@ -27,6 +27,7 @@ from captcha.adapters.storage import init_engine, shutdown_engine
 from captcha.config import Settings, get_settings
 from captcha.domain.catalog import lane_for
 from captcha.domain.enums import CaptchaType, SolveMode
+from captcha.domain.redaction import redact_dsn
 from captcha.observability.logging import setup_logging
 from captcha.services.gateway.errors import validation_error_handler
 from captcha.services.gateway.metrics import build_metrics_app
@@ -149,7 +150,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state = await build_state(cfg)
         app.state.ctx = state
-        _log.info("gateway.started", redis=cfg.redis_url.split("@")[-1], pg=cfg.postgres_url.split("@")[-1])
+        _log.info("gateway.started", redis=redact_dsn(cfg.redis_url), pg=redact_dsn(cfg.postgres_url))
         try:
             yield
         finally:

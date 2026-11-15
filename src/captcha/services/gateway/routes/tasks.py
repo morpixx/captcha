@@ -16,7 +16,7 @@ from captcha.adapters.storage import AccountRepo, TaskRepo
 from captcha.adapters.storage.models import Task as DbTask
 from captcha.application.route_task import route_task
 from captcha.domain.enums import CaptchaType, TaskStatus
-from captcha.domain.errors import CaptchaError
+from captcha.domain.errors import CaptchaError, UrlRejectedError
 from captcha.domain.pricing import estimate_cost
 from captcha.domain.redaction import redact_payload
 from captcha.domain.solution import build_solution, host_for_payload
@@ -25,6 +25,7 @@ from captcha.observability.metrics import tasks_created_total
 from captcha.services.gateway.auth import authenticate
 from captcha.services.gateway.deps import get_db, get_state
 from captcha.services.gateway.errors import (
+    ERR_BAD_REQUEST,
     ERR_NO_SLOT,
     ERR_TASK_NOT_FOUND,
     ERR_UNSUPPORTED_TYPE,
@@ -41,6 +42,7 @@ from captcha.services.gateway.schemas import (
     status_to_api,
 )
 from captcha.services.gateway.state import AppState
+from captcha.services.gateway.url_guard import validate_client_urls
 
 _log = structlog.get_logger(__name__)
 
@@ -75,6 +77,27 @@ async def create_task(
         _log.info("task.unsupported", type=ct.value, known=len(state.solver_types))
         return ORJSONResponse(envelope(ERR_UNSUPPORTED_TYPE), status_code=status.HTTP_200_OK)
 
+    # Everything downstream reads the payload in its wire-normalised shape: the
+    # SSRF guard below, the stored row and the envelope all use this one dict.
+    payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
+    payload.pop("type", None)
+
+    # SSRF guard before any money moves: pageurl/websiteURL/challenge_url/surl/
+    # api_server and callbackUrl are fetched by a worker later, and a client
+    # must not be able to point that fetch at the host's own network.
+    try:
+        validate_client_urls(payload, callback_url=body.callback_url)
+    except UrlRejectedError as exc:
+        _log.info(
+            "task.url_rejected",
+            type=ct.value,
+            field=exc.context.get("field"),
+            host=exc.context.get("host"),
+            address=exc.context.get("address"),
+            account_id=str(account.id),
+        )
+        return ORJSONResponse(envelope(ERR_BAD_REQUEST), status_code=status.HTTP_200_OK)
+
     cost = estimate_cost(ct)
 
     # Rate limit / quota, before the charge: a task the account isn't allowed
@@ -99,8 +122,6 @@ async def create_task(
         return ORJSONResponse(classify(exc.code, exc.message), status_code=status.HTTP_200_OK)
 
     # DB row first — the task id is the UUID the row carries.
-    payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
-    payload.pop("type", None)
     # Postgres gets a credential-free copy: proxy*/cookies never reach JSONB.
     # The full payload stays on the Task/envelope and therefore in Redis (24h).
     db_task = await task_repo.create(
