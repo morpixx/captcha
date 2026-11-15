@@ -8,9 +8,22 @@ from typing import Any
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from captcha.domain.apikey import hash_api_key, key_tail
 from captcha.domain.errors import ConfigError, UnsolvableError
 
 from .models import Account, PaymentIntent, Task, TaskLog, Transaction
+
+
+def api_key_pepper() -> str:
+    """Pepper for key hashing, read through Settings.
+
+    Settings is the only reader of .env, so this is what keeps the CLI (which
+    mints keys), the gateway (which verifies them) and the 0004 backfill
+    deriving the same hash from the same configuration.
+    """
+    from captcha.config import get_settings
+
+    return get_settings().api_key_pepper
 
 
 class AccountRepo:
@@ -21,11 +34,25 @@ class AccountRepo:
         return await self.s.get(Account, account_id)
 
     async def get_by_key(self, api_key: str) -> Account | None:
-        stmt = select(Account).where(Account.api_key == api_key).limit(1)
+        """Look the account up by hash. Plaintext never reaches this query."""
+        if not api_key:
+            return None
+        stmt = select(Account).where(Account.api_key_hash == hash_api_key(api_key, api_key_pepper())).limit(1)
         return (await self.s.execute(stmt)).scalar_one_or_none()
 
     async def create(self, *, api_key: str, name: str = "", balance: Decimal | None = None) -> Account:
-        acc = Account(api_key=api_key, name=name, balance=balance or Decimal("0"))
+        """Mint an account from a plaintext key.
+
+        The key is hashed here and dropped: callers that need to show it to the
+        operator (the CLI seed path) still hold the argument they passed in.
+        """
+        acc = Account(
+            api_key=None,
+            api_key_hash=hash_api_key(api_key, api_key_pepper()),
+            key_tail=key_tail(api_key),
+            name=name,
+            balance=balance or Decimal("0"),
+        )
         self.s.add(acc)
         await self.s.flush()
         return acc

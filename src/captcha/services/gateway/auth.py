@@ -10,13 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from captcha.adapters.storage import Account, AccountRepo
 
+#: A key shorter than this is a client mistake; longer than the storage column
+#: cannot exist, so both are rejected before any hashing or DB round trip.
+_MIN_KEY_LEN = 8
+_MAX_KEY_LEN = 64
+
 
 async def authenticate(client_key: str, session: AsyncSession) -> Account:
     """Return the Account for a client key or raise HTTP 401.
 
-    Disabled accounts are rejected with 403 — the key exists but isn't usable.
+    The lookup is by `api_key_hash` — the plaintext key is never compared to
+    anything stored. Disabled accounts are rejected with 403: the key exists but
+    isn't usable.
     """
-    if not client_key or len(client_key) < 8:
+    if not client_key or not (_MIN_KEY_LEN <= len(client_key) <= _MAX_KEY_LEN):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={

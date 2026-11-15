@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from .capabilities import (
+    HEARTBEAT_TTL_SECONDS,
+    CapabilityRegistry,
+    capability_key,
+    gateway_accepts,
+    gateway_live_types,
+    gateway_ready,
+    heartbeat_key,
+)
 from .keys import (
     LANES,
     Lane,
@@ -17,14 +26,21 @@ from .streams import Consumer, Producer
 StreamName = str
 
 __all__ = [
+    "HEARTBEAT_TTL_SECONDS",
     "LANES",
+    "CapabilityRegistry",
     "Consumer",
     "Lane",
     "Producer",
     "StreamName",
     "TaskStateStore",
+    "capability_key",
     "consumer_group",
     "dead_letter_stream",
+    "gateway_accepts",
+    "gateway_live_types",
+    "gateway_ready",
+    "heartbeat_key",
     "stats_key",
     "stream_name",
     "task_hash_key",
