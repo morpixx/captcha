@@ -243,6 +243,13 @@ def _worker(
     )
 
 
+def test_worker_injects_solver_registry_into_context() -> None:
+    registry = _registry(HttpOk)
+    worker = _worker(registry=registry, redis=FakeRedis())
+
+    assert worker._bundle.template.extra["solver_registry"] is registry
+
+
 def _tasks_total(status: TaskStatus) -> float:
     return (
         metrics.REGISTRY.get_sample_value(

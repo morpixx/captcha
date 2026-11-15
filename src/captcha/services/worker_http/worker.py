@@ -91,6 +91,12 @@ class Worker:
         self._registry = registry
         self._state = state
         self._bundle = bundle
+        # Variant dispatch (funcaptcha) and the reCAPTCHA audio path need the
+        # registry; the worker already owns it, so expose it through the
+        # process-wide context instead of leaving ctx.extra without it.
+        extra = getattr(bundle.template, "extra", None)
+        if isinstance(extra, dict):
+            extra.setdefault("solver_registry", registry)
         self._limiter = limiter
         self._persistence = persistence
         self._settings = settings
