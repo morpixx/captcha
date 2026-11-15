@@ -119,10 +119,12 @@ src/captcha/
 │   ├── detection/             click, bbox, draw, drag + _yolo
 │   ├── score_based/           recaptcha_v3.py, turnstile.py
 │   ├── recaptcha/             v2_audio.py
-│   ├── funcaptcha/            funcaptcha.py, bda.py
-│   ├── antibot/               12 движков: endpoints.py + solver.py
-│   └── interactive/           17 вендоров: endpoints.py + solver.py
-├── crypto/ behavior/          листовые утилиты
+│   ├── funcaptcha/            funcaptcha.py, browser.py, session.py, variants.py,
+│   │                          wire.py, settings.py, bda.py, sensor.py, fields.py, devices.py
+│   ├── antibot/               {cloudflare,akamai,datadome,kasada,perimeterx,imperva,castle,tspd,cybersiara,twitch_integrity,botguard,botdeflector}/
+│   └── interactive/           {mtcaptcha,prosopo,captchafox,vk,yandex,temu,binance,hunt,basilisk,alibaba,tencent,yidun,cutcaptcha,atbcaptcha}/
+├── crypto/                    aes, rsa, xor, hmac, compress — листовые утилиты
+├── behavior/                  bezier, timing, events — листовые утилиты
 ├── observability/             logging, metrics, tracing, sentry
 └── services/                  процессы, только композиция
     ├── gateway/               app.py, auth.py, quotas.py, schemas.py, type_map.py,
