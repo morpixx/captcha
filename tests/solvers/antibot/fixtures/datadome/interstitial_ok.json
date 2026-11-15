@@ -1,0 +1,9 @@
+{
+  "cookies": {
+    "datadome": "js-cookie-value"
+  },
+  "headers": {
+    "x-dd-b": "1.0.0"
+  },
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) DataDome/1.0"
+}

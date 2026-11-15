@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "headers": [
+    [
+      "Content-Type",
+      "application/json"
+    ],
+    [
+      "Set-Cookie",
+      "datadome=fixture-cookie-value; Max-Age=31536000; Domain=.example.com; Path=/; SameSite=Lax"
+    ]
+  ],
+  "body": "{}"
+}
