@@ -71,3 +71,35 @@ def test_math_empty_ocr_raises() -> None:
     solver = MathImageSolver()
     with patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("")), pytest.raises(ModelInferenceError):
         asyncio.run(solver.solve_http(_mk_task(), SolverContext()))
+
+
+def test_sanitize_rejects_exponentiation() -> None:
+    assert _sanitize("2 ** 3") == ""
+    assert _sanitize("2**3") == ""
+
+
+def test_sanitize_rejects_overlong_expression() -> None:
+    assert _sanitize("1" + "+1" * 50) == ""
+
+
+def test_math_fraction_result() -> None:
+    solver = MathImageSolver()
+    with patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("7 / 2")):
+        result = asyncio.run(solver.solve_http(_mk_task(), SolverContext()))
+    assert result.text == "3.5"
+
+
+def test_math_negative_result() -> None:
+    solver = MathImageSolver()
+    with patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("3 - 10")):
+        result = asyncio.run(solver.solve_http(_mk_task(), SolverContext()))
+    assert result.text == "-7"
+
+
+def test_math_division_by_zero_raises() -> None:
+    solver = MathImageSolver()
+    with (
+        patch.object(solver._ocr, "solve_http", side_effect=_fake_ocr("4 / 0")),
+        pytest.raises(ModelInferenceError),
+    ):
+        asyncio.run(solver.solve_http(_mk_task(), SolverContext()))
