@@ -18,27 +18,28 @@
 `src/captcha/domain/catalog.py`. Один файл может покрывать несколько типов одного
 семейства — это отмечено в колонке «файл».
 
-**Сейчас: 36 из 62 вендорских типов + `hopscotch` (кастомный, вне 62). Pending — 26.**
+**Сейчас: 63 из 63 (62 вендорских типа + `hopscotch`). Pending — 0.**
 
-Статус в таблицах: **live** — файл есть; **pending** — runbook ещё не написан. «Live» здесь
-значит «документ есть», а не «тип проверен на живом сайте»: `experimental=True` у солвера
-важнее статуса файла.
+Статус «live» здесь значит «документ есть», а не «тип проверен на живом сайте»:
+`experimental=True` у солвера важнее статуса файла. На 2026-11-15 — 42 экспериментальных
+солвера, 38 из 62 вендорских типов остаются experimental-only, живой evidence есть у 0/62
+(финальный гейт L3 не закрыт ни по одному типу), канареечные фикстуры — у 10 из 62.
 
 ### PoW / protocol
 
 | тип | лейн | runbook |
 |---|---|---|
-| `friendly_captcha` | protocol | pending |
-| `altcha` | protocol | pending |
+| `friendly_captcha` | protocol | [friendly_captcha.md](friendly_captcha.md) |
+| `altcha` | protocol | [altcha.md](altcha.md) |
 
 ### OCR / audio (cv)
 
 | тип | лейн | runbook |
 |---|---|---|
-| `text_captcha` | cv | pending |
-| `math_image` | cv | pending |
-| `image_to_text` | cv | pending |
-| `audio_captcha` | cv | pending |
+| `text_captcha` | cv | [text_captcha.md](text_captcha.md) |
+| `math_image` | cv | [math_image.md](math_image.md) |
+| `image_to_text` | cv | [image_to_text.md](image_to_text.md) |
+| `audio_captcha` | cv | [audio_captcha.md](audio_captcha.md) |
 
 ### Геометрия и сетка (cv)
 
@@ -110,57 +111,60 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
 | `turnstile_invisible` | http | [turnstile.md](turnstile.md) |
 | `cf_challenge` | http | [cf_challenge.md](cf_challenge.md) |
 
-### Антибот-движки (http)
+### Антибот-движки
 
 | тип | лейн | runbook |
 |---|---|---|
 | `akamai_sensor` | http | [akamai_sensor.md](akamai_sensor.md) |
 | `akamai_sbsd` | http | [akamai_sbsd.md](akamai_sbsd.md) |
 | `kasada` | http | [kasada.md](kasada.md) |
-| `perimeterx` | http | pending |
-| `imperva` | http | pending |
-| `castle` | http | pending |
-| `tspd` | http | pending |
-| `cybersiara` | http | pending |
-| `twitch_integrity` | http | pending |
-| `botguard` | http | pending |
-| `botdeflector` | http | pending |
-| `awswaf` | cv | pending |
+| `perimeterx` | http | [perimeterx.md](perimeterx.md) |
+| `imperva` | http | [imperva.md](imperva.md) |
+| `castle` | http | [castle.md](castle.md) |
+| `tspd` | http | [tspd.md](tspd.md) |
+| `cybersiara` | http | [cybersiara.md](cybersiara.md) |
+| `twitch_integrity` | http | [twitch_integrity.md](twitch_integrity.md) |
+| `botguard` | http | [botguard.md](botguard.md) |
+| `botdeflector` | http | [botdeflector.md](botdeflector.md) |
+| `awswaf` | cv | [awswaf.md](awswaf.md) (grid-голова, не движок `engines/`) |
 
 ### Interactive-вендоры
 
 | тип | лейн | runbook |
 |---|---|---|
-| `shein` | cv | pending |
-| `mtcaptcha` | cv | pending |
+| `shein` | cv | [shein.md](shein.md) |
+| `mtcaptcha` | cv | [mtcaptcha.md](mtcaptcha.md) |
 | `tencent` | browser | [tencent.md](tencent.md) |
 | `yidun` | browser | [yidun.md](yidun.md) |
-| `alibaba` | http | pending |
-| `prosopo` | browser | pending |
-| `captchafox` | browser | pending |
-| `vk` | http | pending |
-| `yandex` | browser | pending |
-| `temu` | http | pending |
-| `binance` | cv | pending |
-| `hunt` | http | pending |
-| `basilisk` | cv | pending |
+| `alibaba` | http | [alibaba.md](alibaba.md) |
+| `prosopo` | browser | [prosopo.md](prosopo.md) |
+| `captchafox` | browser | [captchafox.md](captchafox.md) |
+| `vk` | http | [vk.md](vk.md) |
+| `yandex` | browser | [yandex.md](yandex.md) |
+| `temu` | http | [temu.md](temu.md) |
+| `binance` | cv | [binance.md](binance.md) |
+| `hunt` | http | [hunt.md](hunt.md) |
+| `basilisk` | cv | [basilisk.md](basilisk.md) |
 | `cutcaptcha` | cv | [cutcaptcha.md](cutcaptcha.md) |
 | `capy` | cv | [capy.md](capy.md) |
 | `keycaptcha` | cv | [keycaptcha.md](keycaptcha.md) |
 | `lemin` | cv | [lemin.md](lemin.md) |
 | `atbcaptcha` | browser | [atbcaptcha.md](atbcaptcha.md) |
 
-## Что осталось (26 pending)
+## Что осталось
 
-`friendly_captcha`, `altcha`, `text_captcha`, `math_image`, `image_to_text`,
-`audio_captcha`, `perimeterx`, `imperva`, `castle`, `tspd`, `cybersiara`,
-`twitch_integrity`, `botguard`, `botdeflector`, `awswaf`, `shein`, `mtcaptcha`,
-`alibaba`, `prosopo`, `captchafox`, `vk`, `yandex`, `temu`, `binance`, `hunt`,
-`basilisk`.
+**Типовых runbook-ов не осталось: 63/63.** Всё, что осталось по покрытию, — не документы:
 
-Порядок разумной дописки: сначала `awswaf`/`shein` (у них есть grid-голова и фикстуры
-`tests/solvers/classification/fixtures/golden/`), потом cookie-движки (`perimeterx`,
-`imperva`, `castle`, `tspd`), потом PoW/OCR.
+1. **Живой evidence.** 0 из 62 типов имеют L3-запись (7-дневный canary, pass/p95, покрытие);
+   38 из 62 вендорских типов — experimental-only. Порядок L0–L3 и пороги — `docs/plan.md` §2.
+2. **Канареечные фикстуры.** 10 из 62 типов: `altcha`, `datadome`, `friendly_captcha`,
+   `funcaptcha`, `geetest_v3`, `geetest_v4`, `hcaptcha`, `recaptcha_v2`, `recaptcha_v3`,
+   `turnstile`. Остальные runbook-и §6 содержат кейс «не добавлен» с готовым JSON.
+3. **Веса.** Головы `awswaf-v1`/`shein-v1` и OCR/audio-модели без весов в бакете отвечают
+   `ERR_CONFIG` — см. §7 соответствующих файлов и `docs/ml.md`.
+4. **live-`FILL`.** В §7 типовых файлов перечислены конкретные `# FILL:` из кода — схемы
+   сенсоров, MAC-секреты, пути `/flow-token/`, селекторы виджетов; каждый закрывается
+   только захватом на живом сайте.
 
 ## Как писать
 
@@ -171,7 +175,7 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
 2. Заполнять по коду, а не по памяти: §3 — реальный `solve_http`/`solve_browser`, §4 —
    `domain/solution.py` + `extra`, §5 — `domain/errors.py` и фактически наблюдавшиеся отказы.
 3. Неизмеренное помечать явно («не проверено», «не измерено», FILL), а не выдумывать цифры.
-4. Ссылаться только на существующие файлы; ссылки проверяются глазами перед коммитом.
+4. Ссылаться только на существующие файлы; ссылки проверяются перед коммитом.
 5. Обновлять §9 (incident log) при каждом инциденте: дата — триггер — фикс.
 
 ## Известные расхождения
@@ -182,7 +186,17 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
   `rotate` падает уже на задаче с `ERR_CONFIG` (классический путь требует OpenCV).
   `baseline.md` — снимок и не переписывается; `AGENTS.md` и `docs/architecture.md`
   приведены к факту, детали — здесь и в [rotate.md](rotate.md) / [slider.md](slider.md).
-- У HTTP-солверов, которые делегируют в `cv`/`browser` (tencent, yidun, atbcaptcha,
-  cutcaptcha, recaptcha_v2), есть риск интеграции: `services/worker_cv/worker.py` собирает
-  `SolverContext` без `http` и не обрабатывает `ERR_NEEDS_BROWSER`. Подробности — в §7
-  соответствующих runbook-ов.
+- **cv-воркер не даёт `http`/`browser`.** `services/worker_cv/worker.py` собирает
+  `SolverContext(models=…, config=…)` без `http`, `browser`, `js_runtime`, `sensors`
+  и не обрабатывает `ERR_NEEDS_BROWSER`. Последствия по типам:
+  `mtcaptcha`, `binance`, `basilisk` (каталог — `cv`, а `solve_http` требует
+  `ctx.http`) отвечают `ERR_CONFIG` до первого запроса; `tencent`, `yidun`,
+  `atbcaptcha` не могут эскалировать в браузер из этого лейна. Подробности — в §7
+  перечисленных файлов.
+- **Форма ответа `awswaf`/`shein`.** Каталог объявляет `AWSWAF` (`captcha_voucher`/
+  `existing_token`) и `COORDS` (`coordinates`), а grid-солверы возвращают `indices`;
+  `domain/solution.py` уходит в generic-фолбэк и отдаёт `{"indices": [...]}`. Пока обмен
+  voucher и конвертация индекса в точку не реализованы — см. [awswaf.md](awswaf.md) §4,
+  [shein.md](shein.md) §4.
+- **`experimental` важнее статуса файла.** Runbook есть у всех 63 типов, но это не значит
+  «продаётся»: с `ALLOW_EXPERIMENTAL_TASKS=0` продаются 24 из 62 вендорских типов.
