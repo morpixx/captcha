@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from captcha.adapters.queue import Consumer, TaskStateStore
+from captcha.adapters.queue import Consumer, LaneHeartbeat, TaskStateStore
 from captcha.adapters.queue.keys import Lane
 from captcha.adapters.storage.persistence import TaskPersistence, engine_session_factory
 from captcha.adapters.weights import Registry as ModelRegistry
@@ -65,6 +65,7 @@ class Worker:
         max_retries: int = 3,
         cache_dir: str = "./models-cache",
         registry: SolverRegistry | None = None,
+        heartbeat: LaneHeartbeat | None = None,
     ) -> None:
         self.settings = settings
         self.worker_id = worker_id or f"{LANE}-{uuid.uuid4().hex[:8]}"
@@ -78,6 +79,8 @@ class Worker:
         self._consumer: Consumer | None = None
         self._state: TaskStateStore | None = None
         self._registry: SolverRegistry | None = registry
+        #: Lease the gateway gates cv sales on; injected in tests, built in _setup.
+        self._heartbeat: LaneHeartbeat | None = heartbeat
         # one Solver instance per solver class; one class can serve many types
         self._instances: dict[int, Solver] = {}
         self._by_type: dict[CaptchaType, Solver] = {}
@@ -151,6 +154,27 @@ class Worker:
         if self._registry is None:
             self._registry = discover_solvers(registry=global_registry())
         await self._prepare_solvers()
+
+        if self._heartbeat is None:
+            self._heartbeat = LaneHeartbeat(
+                self._redis,
+                lane=LANE,
+                worker_id=self.worker_id,
+                prefix=self.settings.redis_stream_prefix,
+            )
+        await self._start_heartbeat()
+
+    async def _start_heartbeat(self) -> None:
+        """Advertise the lane and only the types this worker actually prepared.
+
+        `_by_type` is already lane-filtered by `_accepted_types`; taking the set
+        from it instead of the registry keeps a solver that failed `prepare()`
+        (missing weights, no cv extra) out of the sellable set.
+        """
+        if self._heartbeat is None:
+            return
+        self._heartbeat.set_types(sorted(self._by_type, key=lambda ct: ct.value))
+        await self._heartbeat.start()
 
     async def _prepare_solvers(self) -> None:
         assert self._registry is not None and self._ctx is not None
@@ -448,6 +472,9 @@ class Worker:
 
     async def _teardown(self) -> None:
         self._log.info("worker.teardown")
+        if self._heartbeat is not None:
+            with contextlib.suppress(Exception):
+                await self._heartbeat.stop()
         for inst in list(self._instances.values()):
             with contextlib.suppress(Exception):
                 await inst.shutdown()

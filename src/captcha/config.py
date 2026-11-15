@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     gateway_host: str = Field(default="0.0.0.0", alias="CAPTCHA_GATEWAY_HOST")
     gateway_port: int = Field(default=8080, alias="CAPTCHA_GATEWAY_PORT")
     gateway_workers: int = Field(default=4, alias="CAPTCHA_GATEWAY_WORKERS")
+    # Contract §2/§7: the sellable set is re-read from live heartbeats on this
+    # interval instead of once at boot. Worker beats are 30 s, TTL 90 s, so a
+    # dead lane stops being sold within TTL + one refresh.
+    gateway_types_refresh_sec: int = Field(default=20, ge=5, le=300, alias="CAPTCHA_TYPES_REFRESH_SEC")
+    # Manual declarations unioned into the sellable set (contract §7), comma or
+    # semicolon separated. Unknown names are ignored; heartbeat still owns the
+    # default path, this only covers a type the registry cannot see.
+    captcha_extra_types: str = Field(default="", alias="CAPTCHA_EXTRA_TYPES")
     # Contract §7 freezes ALLOW_EXPERIMENTAL_TASKS=0 for production. The current
     # beta ships it as True so the 41 experimental solvers stay sellable; this
     # is a deliberate, temporary divergence — set it to 0 to restore §7.
