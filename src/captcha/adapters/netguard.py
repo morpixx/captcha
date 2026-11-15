@@ -16,6 +16,7 @@ offending address, never the full URL: a `pageurl` can hold a token.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from collections.abc import Callable
@@ -100,6 +101,27 @@ def ensure_redirect(location: str, *, base: str, resolver: Resolver | None = Non
     that redirects to `http://10.0.0.1/` is exactly the hole this closes.
     """
     return ensure_public_url(urljoin(base, location), resolver=resolver, field=field)
+
+
+async def ensure_public_url_async(
+    url: str,
+    *,
+    resolver: Resolver | None = None,
+    field: str | None = None,
+) -> str:
+    """`ensure_public_url` off the event loop: DNS is a blocking syscall."""
+    return await asyncio.to_thread(ensure_public_url, url, resolver=resolver, field=field)
+
+
+async def ensure_redirect_async(
+    location: str,
+    *,
+    base: str,
+    resolver: Resolver | None = None,
+    field: str | None = None,
+) -> str:
+    """`ensure_redirect` off the event loop."""
+    return await asyncio.to_thread(ensure_redirect, location, base=base, resolver=resolver, field=field)
 
 
 def is_public_ip(address: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -221,7 +243,9 @@ __all__ = [
     "UrlRejectedError",
     "default_resolver",
     "ensure_public_url",
+    "ensure_public_url_async",
     "ensure_public_url_shape",
     "ensure_redirect",
+    "ensure_redirect_async",
     "is_public_ip",
 ]

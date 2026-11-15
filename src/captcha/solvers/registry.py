@@ -74,6 +74,18 @@ class SolverRegistry:
     def all_solvers(self) -> Iterable[type[Solver]]:
         return self._by_name.values()
 
+    def resolution_order(self) -> list[type[Solver]]:
+        """Registration order with non-experimental solvers first.
+
+        `pick()` already prefers verified solvers, but workers that cache one
+        instance per type (the lane `_by_type` maps) walk the registry once and
+        keep the first hit. Without this order an experimental solver registered
+        before a verified one wins the type on `cv` or `protocol` — e.g.
+        `classification_grid` got `funcaptcha_grid` instead of `hcaptcha`.
+        `sorted` is stable, so registration order is preserved inside each group.
+        """
+        return sorted(self._by_name.values(), key=lambda cls: cls.info.experimental)
+
 
 def _supports_mode(info: SolverInfo, mode: SolveMode) -> bool:
     """Transport filter mirrored from `Solver.supports`, usable without an instance."""

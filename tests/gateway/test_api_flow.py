@@ -117,6 +117,11 @@ class FakeProducer:
         self.published.append((envelope.task.id, lane))
 
 
+def _public_resolver(_host: str) -> tuple[str, ...]:
+    """Every test host is public; the gateway guard must not touch real DNS."""
+    return ("93.184.216.34",)
+
+
 @dataclass
 class FakeState:
     state_store: FakeStore
@@ -124,6 +129,7 @@ class FakeState:
     settings: Any = None
     #: Types this fake deployment claims to solve. createTask refuses the rest.
     solver_types: frozenset[CaptchaType] = frozenset({CaptchaType.TEXT})
+    url_resolver: Any = _public_resolver
 
 
 async def _fake_db():

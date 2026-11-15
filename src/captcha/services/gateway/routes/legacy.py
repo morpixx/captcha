@@ -37,9 +37,8 @@ from captcha.services.gateway.legacy_map import (
     parse_in_request,
 )
 from captcha.services.gateway.quotas import QuotaGuard, QuotaLimits
-from captcha.services.gateway.schemas import status_to_api
+from captcha.services.gateway.schemas import status_to_api, validate_task_urls
 from captcha.services.gateway.state import AppState
-from captcha.services.gateway.url_guard import validate_client_urls
 
 _log = structlog.get_logger(__name__)
 
@@ -149,20 +148,13 @@ async def legacy_in(
         _log.info("legacy.unsupported", type=captcha_type.value, known=len(state.solver_types))
         return _error("ERROR_TASK_NOT_SUPPORTED", as_json)
 
-    # SSRF guard before the charge: the flat legacy fields carry the same URLs
-    # the JSON API does (pageurl/surl/api_server/challenge_url).
+    # Same URL gate as the JSON API, before the charge: a private/loopback/
+    # metadata target never reaches a stream and never costs anything.
     try:
-        validate_client_urls(ireq.payload)
-    except UrlRejectedError as exc:
-        _log.info(
-            "legacy.url_rejected",
-            type=captcha_type.value,
-            field=exc.context.get("field"),
-            host=exc.context.get("host"),
-            address=exc.context.get("address"),
-            account_id=str(account.id),
-        )
-        return _error(ERROR_BAD_PARAMETERS, as_json)
+        await validate_task_urls(ireq.payload, resolver=getattr(state, "url_resolver", None))
+    except UrlRejectedError:
+        _log.info("legacy.url_rejected", type=captcha_type.value)
+        return _error(_public_error_code("ERR_URL_REJECTED"), as_json)
 
     cost = estimate_cost(captcha_type)
     account_repo = AccountRepo(session)

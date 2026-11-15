@@ -61,6 +61,14 @@
 | `hcaptcha` | browser | [hcaptcha.md](hcaptcha.md) |
 | `hcaptcha_enterprise` | browser | [hcaptcha.md](hcaptcha.md) |
 
+**Same-origin.** hCaptcha привязывает токен к sitekey-хосту **и к странице, которая его
+сминтила**: токен, полученный на одном домене, не принимается на другом. `host` обязан
+совпадать с хостом `websiteURL`; при расхождении HTTP-путь отдаёт терминальный
+`ERR_UNSOLVABLE` (`ERROR_CAPTCHA_UNSOLVABLE`), а не мёртвый токен
+(`solvers/hcaptcha/wire.py: params_from_task`; в `getTaskResult` сейчас уходит
+внутренний код — см. §6 hcaptcha.md). Для Riot/Steam это значит: минт и сабмит — на одном
+origin, `host=account.riotgames.com` не переиспользуется для другого домена.
+
 ### reCAPTCHA
 
 | тип | лейн | runbook |
@@ -168,12 +176,12 @@
 
 ## Известные расхождения
 
-- `docs/baseline.md` и `AGENTS.md` говорят, что `slider` и `rotate` не грузятся без
-  `--extra cv`. Замер 2026-11-15: все 60 записей `solvers/loader.py` импортируются без
-  `torch`/`cv2`, `slider` решает на numpy-бэкенде (`offset 100`, `match_score≈0.81` на
-  голден-паре), а `rotate` падает уже на задаче с `ERR_CONFIG` (классический путь требует
-  OpenCV). `baseline.md` — снимок и не переписывается, факт зафиксирован здесь и в
-  [rotate.md](rotate.md) / [slider.md](slider.md).
+- `docs/baseline.md` говорит, что `slider` и `rotate` не грузятся без `--extra cv`.
+  Замер 2026-11-15: все 60 записей `solvers/loader.py` импортируются без `torch`/`cv2`,
+  `slider` решает на numpy-бэкенде (`offset 100`, `match_score≈0.81` на голден-паре), а
+  `rotate` падает уже на задаче с `ERR_CONFIG` (классический путь требует OpenCV).
+  `baseline.md` — снимок и не переписывается; `AGENTS.md` и `docs/architecture.md`
+  приведены к факту, детали — здесь и в [rotate.md](rotate.md) / [slider.md](slider.md).
 - У HTTP-солверов лейна `cv` (tencent, yidun, atbcaptcha, cutcaptcha, recaptcha_v2) есть
   риск интеграции: `services/worker_cv/worker.py` собирает `SolverContext` без `http` и не
   обрабатывает `ERR_NEEDS_BROWSER`. Подробности — в §7 соответствующих runbook-ов.

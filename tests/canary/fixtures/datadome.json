@@ -1,0 +1,14 @@
+{
+  "name": "datadome_tags",
+  "task": {
+    "type": "datadome",
+    "websiteURL": "https://example.com/login",
+    "ddjskey": "6E4B2C7A9F1D3E5B",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["cookies", "domains", "userAgent"]
+  },
+  "note": "ddjskey, page URL and UA are the recorded replay constants in tests/solvers/antibot/test_datadome.py; tags_ok.json pins the Set-Cookie shape. Cookie values stay synthetic; replay case only."
+}

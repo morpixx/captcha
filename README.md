@@ -25,11 +25,14 @@ GET  /account        ->  кабинет: баланс, леджер, попол�
 | кабинет: баланс, леджер транзакций, пополнение, статистика по типам | работает (провайдер оплаты — заглушка `manual`) |
 | очередь (Redis Streams, DLQ, ретраи), хранилище (Postgres + Alembic) | работает |
 | worker-http / worker-cv / worker-protocol | работают |
-| worker-browser (Camoufox, 12 сессий, GeoIP, kill дерева процессов) | реализован, покрыт тестами; в compose не описан, живой прогон не зафиксирован |
+| worker-browser (Camoufox, 12 сессий, GeoIP, kill дерева процессов) | реализован, покрыт тестами; в compose за профилем `browser`, живой прогон — job `browser` в CI |
+| TLS-ингресс (Caddy: 80/443, ACME или внутренний CA) | работает: сервис `caddy`, gateway наружу не публикуется |
 | HTTP → browser escalation (`ERR_NEEDS_BROWSER`, один прыжок) | работает |
-| capabilities/heartbeat, `/readyz` с проверкой лейнов | работает (heartbeat не влияет на продажу типов — см. `docs/architecture.md`) |
-| canary: фикстуры, type health, webhook | работает, фикстур ещё нет |
-| api-key hash at rest (HMAC-SHA256 + pepper), квоты, netguard, redaction | работает |
+| capabilities/heartbeat, `/readyz` с проверкой лейнов | работает: типы лейна `browser` продаются только при свежем heartbeat, остальные — из реестра (`docs/architecture.md`) |
+| canary: фикстуры, type health, webhook | работает; фикстуры есть на 2 типа из 62 (`friendly_captcha`, `altcha`) |
+| `ALLOW_EXPERIMENTAL_TASKS` — гейт experimental-типов (§7) | реализован; в beta по умолчанию `1`, контракт требует `0` в проде |
+| api-key hash at rest (HMAC-SHA256 + pepper), квоты, redaction | работает |
+| netguard (SSRF-проверка клиентских URL) | модуль + тесты; подключён только к навигации браузерного лейна, gateway-граница в работе (`feat/netguard-http`) |
 | транспорт curl_cffi, JA3-профили, JS-песочница, пул прокси, реестр весов | работает |
 | проекция решения в ключи 2captcha по типу | работает |
 | солверы: pow, ocr, audio, slider, rotate, detection, classification, hcaptcha | реализованы, нужны веса для CV |
@@ -42,10 +45,14 @@ GET  /account        ->  кабинет: баланс, леджер, попол�
 
 **62/62 — финальный гейт, не текущее состояние.** Уровни L0–L3, пороги L3 и правило
 «продаём только L3» — [docs/plan.md](docs/plan.md) §1–2. Сейчас ни один тип не имеет
-7-дневной canary.
+7-дневной canary: фикстуры есть только на `friendly_captcha` и `altcha`.
 
-Инвентарь на 2026-11-15: 62 типа в каталоге, 60 записей в `solvers/loader.py`, 58
-загружаются без `--extra cv` (60/62 типов; `slider` и `rotate` требуют cv2), 62/62 с экстрой.
+Инвентарь на 2026-11-15: 63 значения `CaptchaType` (62 вендорских + кастомный
+`hopscotch`), 60 записей в `solvers/loader.py`; все 60 импортируются без `--extra cv`,
+покрытие типов — 63/63. `slider` решает на numpy-бэкенде, `rotate` (как detection- и
+classification-солверы) отвечает на задаче `ERR_CONFIG` без `cv2`/торча/весов.
+`experimental=True` у 42 из 60 солверов — это 38 вендорских типов. Лейны: http 21,
+cv 34 (+ `hopscotch`), protocol 2, browser 5.
 
 ## Быстрый старт
 
@@ -58,6 +65,10 @@ cp .env.example .env
 make dev                       # compose: redis + postgres + minio + migrate + gateway + workers
 make seed                      # создать аккаунт и напечатать clientKey
 ~~~
+
+`make dev` поднимает dev-оверлей: gateway слушает `127.0.0.1:8080`, Caddy выключен
+(профиль `edge`). Прод-стек — `docker compose up` без оверлея: наружу публикуется только
+`caddy` (80/443, TLS по `CAPTCHA_DOMAIN`), gateway доступен лишь в сети compose.
 
 Первая задача:
 
@@ -134,11 +145,14 @@ src/captcha/
 ~~~
 make lint       ruff                          clean
 make imports    import-linter                 6 contracts kept, 0 broken
-make test       pytest                        655 passed, 3 skipped (тяжёлые требуют --extra cv)
+make test       pytest                        1924 passed, 12 skipped (10 — integration без Redis/PG, 2 — torch/jsdom)
 make check      всё вышеперечисленное
 ~~~
 
-CI: `.github/workflows/ci.yml`, Python 3.14.
+CI: `.github/workflows/ci.yml`, Python 3.14. Четыре job-а: `checks` (ruff,
+lint-imports, полный `pytest` без `tests/integration`, scoped mypy, yamllint + `node --check`),
+`integration` (Redis + Postgres, 9 тестов), `browser` (Camoufox-образ,
+`pytest -m browser tests/integration/browser`), `security` (gitleaks, trivy, pip-audit).
 
 ## Команды
 

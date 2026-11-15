@@ -7,7 +7,9 @@ label is a scheduling detail, not a transport one.
 Lifecycle
 ---------
 1. Connect Redis, open the `cv` consumer group, build `SolverContext` with a
-   `captcha.adapters.weights.Registry` ready to lazy-pull weights.
+   `captcha.adapters.weights.Registry` ready to lazy-pull weights. The context
+   has no HTTP client of its own: `context.task_context` swaps in a fresh one
+   per task, because the client carries that task's proxy and cookie jar.
 2. Discover solvers via `captcha.solvers` entry points; keep those whose
    `info.types` route to the `cv` lane under `pick_lane`.
 3. `prepare()` each solver once. Failures are logged and the solver is skipped.
@@ -26,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from captcha.adapters.queue import Consumer, TaskStateStore
+from captcha.adapters.queue import Consumer, LaneHeartbeat, TaskStateStore
 from captcha.adapters.queue.keys import Lane
 from captcha.adapters.storage.persistence import TaskPersistence, engine_session_factory
 from captcha.adapters.weights import Registry as ModelRegistry
@@ -40,6 +42,8 @@ from captcha.domain.redaction import redact_dsn
 from captcha.observability import metrics
 from captcha.solvers import Solver, SolverContext
 from captcha.solvers.registry import SolverRegistry, discover_solvers, global_registry
+
+from .context import HttpFactory, task_context
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -66,6 +70,7 @@ class Worker:
         max_retries: int = 3,
         cache_dir: str = "./models-cache",
         registry: SolverRegistry | None = None,
+        heartbeat: LaneHeartbeat | None = None,
     ) -> None:
         self.settings = settings
         self.worker_id = worker_id or f"{LANE}-{uuid.uuid4().hex[:8]}"
@@ -79,6 +84,8 @@ class Worker:
         self._consumer: Consumer | None = None
         self._state: TaskStateStore | None = None
         self._registry: SolverRegistry | None = registry
+        #: Lease the gateway gates cv sales on; injected in tests, built in _setup.
+        self._heartbeat: LaneHeartbeat | None = heartbeat
         # one Solver instance per solver class; one class can serve many types
         self._instances: dict[int, Solver] = {}
         self._by_type: dict[CaptchaType, Solver] = {}
@@ -86,6 +93,7 @@ class Worker:
         self._sem: asyncio.Semaphore | None = None
         self._inflight: set[asyncio.Task[None]] = set()
         self._model_registry: ModelRegistry | None = None
+        self._http_factory = HttpFactory(getattr(settings, "worker_http_impersonate", ""))
         self._log = log.bind(lane=LANE, worker=self.worker_id)
 
     # ---- lifecycle -----------------------------------------------------
@@ -153,9 +161,32 @@ class Worker:
             self._registry = discover_solvers(registry=global_registry())
         await self._prepare_solvers()
 
+        if self._heartbeat is None:
+            self._heartbeat = LaneHeartbeat(
+                self._redis,
+                lane=LANE,
+                worker_id=self.worker_id,
+                prefix=self.settings.redis_stream_prefix,
+            )
+        await self._start_heartbeat()
+
+    async def _start_heartbeat(self) -> None:
+        """Advertise the lane and only the types this worker actually prepared.
+
+        `_by_type` is already lane-filtered by `_accepted_types`; taking the set
+        from it instead of the registry keeps a solver that failed `prepare()`
+        (missing weights, no cv extra) out of the sellable set.
+        """
+        if self._heartbeat is None:
+            return
+        self._heartbeat.set_types(sorted(self._by_type, key=lambda ct: ct.value))
+        await self._heartbeat.start()
+
     async def _prepare_solvers(self) -> None:
         assert self._registry is not None and self._ctx is not None
-        for cls in self._registry.all_solvers():
+        # Non-experimental first: `_by_type` keeps the first hit, so this is
+        # the same preference `pick()` applies.
+        for cls in self._registry.resolution_order():
             accepted = self._accepted_types(cls)
             if not accepted:
                 continue
@@ -186,6 +217,11 @@ class Worker:
 
     def _accepted_types(self, cls: type[Solver]) -> list[CaptchaType]:
         """Keep only solver types that route here under `pick_lane`."""
+        if not cls.info.http:
+            # A browser-only solver has no `solve_http`; caching it here would
+            # turn every task into the base-class "not supported" error (and a
+            # retry loop). It belongs to the browser lane.
+            return []
         accepted: list[CaptchaType] = []
         for ct in cls.info.types:
             fake = Task(
@@ -268,8 +304,10 @@ class Worker:
             return
 
         timeout = self._resolve_timeout(task)
+        # HTTP is per task, never shared: proxy, UA and cookies belong to it.
+        ctx, client = task_context(self._ctx, self._http_factory, task)
         try:
-            result = await asyncio.wait_for(solver.solve_http(task, self._ctx), timeout=timeout)
+            result = await asyncio.wait_for(solver.solve_http(task, ctx), timeout=timeout)
         except TimeoutError:
             await self._handle_failure(
                 message_id,
@@ -304,6 +342,9 @@ class Worker:
                 message_id, envelope, wrapped, solve_mode, terminal=False, solver_name=solver.info.name
             )
             return
+        finally:
+            with contextlib.suppress(Exception):
+                await client.aclose()
 
         latency_s = time.perf_counter() - start
         if not result.latency_ms:
@@ -449,6 +490,9 @@ class Worker:
 
     async def _teardown(self) -> None:
         self._log.info("worker.teardown")
+        if self._heartbeat is not None:
+            with contextlib.suppress(Exception):
+                await self._heartbeat.stop()
         for inst in list(self._instances.values()):
             with contextlib.suppress(Exception):
                 await inst.shutdown()

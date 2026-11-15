@@ -16,10 +16,18 @@
 | worker-browser | `python -m captcha.services.worker_browser --consumers 1` | Camoufox, 12 сессий | по 1–3 нодам, RAM-bound |
 | canary | `python -m captcha.services.canary` | прогон фикстур каждые 6 ч | один экземпляр |
 | pipeline | `python -m captcha.services.pipeline` | сэмплинг/голден/ретрейн | по расписанию |
+| caddy | `docker compose` (сервис `caddy`) | TLS-ингресс 80/443 → gateway | одна реплика на домен |
 
 `docker-compose.yml` описывает redis, postgres, minio, migrate, gateway, worker-http,
-worker-protocol, worker-cv. **worker-browser и canary в compose отсутствуют** — запускаются
-отдельно (см. `runbooks/deploy.md`), потому что браузерной ноде нужен camoufox и ~16 ГБ RAM.
+worker-protocol, worker-cv, а также worker-browser (профиль `browser`) и canary (профиль
+`canary`). Базовый `make dev` их не поднимает: браузерной ноде нужен camoufox и ~16 ГБ RAM,
+canary — фикстуры. Вручную: `docker compose --profile browser --profile canary up -d` или
+`runbooks/deploy.md`.
+
+Наружу публикуется только `caddy` (80/443, ACME при заданном `CAPTCHA_DOMAIN`, иначе
+внутренний CA); gateway — `expose: 8080` внутри сети compose. Дев-оверлей
+(`docker-compose.dev.yml`) выключает Caddy профилем `edge` и публикует
+`127.0.0.1:8080`.
 
 Лейны в Redis: `captcha:stream:{http,cv,protocol,browser}`, DLQ — `captcha:dlq`,
 состояние задачи — `captcha:task:<id>` (TTL 24 ч), квоты — `captcha:quota:*`,
@@ -44,12 +52,13 @@ type health — `captcha:typehealth:<type>` (TTL 12 ч).
 | proxy | `PROXY_PROVIDER_PRIMARY`, `PROXY_PROVIDER_FALLBACK`, `PROXY_POOL_FILE` |
 | llm | `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY` |
 | observability | `LOG_LEVEL`, `LOG_JSON`, `OTEL_ENDPOINT`, `SENTRY_DSN` |
-| security | `ADMIN_TOKEN`, `API_KEY_PEPPER`, `RATE_LIMIT_CREATE_PER_MIN`, `MAX_ACTIVE_TASKS_PER_ACCOUNT`, `MAX_DAILY_TASKS`, `MAX_DAILY_SPEND` |
+| security | `ADMIN_TOKEN`, `API_KEY_PEPPER`, `RATE_LIMIT_CREATE_PER_MIN`, `MAX_ACTIVE_TASKS_PER_ACCOUNT`, `MAX_DAILY_TASKS`, `MAX_DAILY_SPEND`, `ALLOW_EXPERIMENTAL_TASKS` |
 | pingback | `CALLBACK_TIMEOUT_SEC`, `CALLBACK_MAX_ATTEMPTS` |
 
-**Расхождение:** `.env.example` не перечисляет browser/canary/security-переменные — они
-работают, но не документированы в примере. Это долг перед `infra-deploy`/docs; до правки
-сверяйтесь с `config.py`.
+**Расхождение:** `.env.example` перечисляет browser/canary/security-переменные, но не
+содержит `ALLOW_EXPERIMENTAL_TASKS` — в beta он по умолчанию `1`, а прод по контракту §7
+обязан ставить `0` (иначе продаются типы, у которых единственный солвер `experimental`).
+До правки примера сверяйтесь с `config.py`.
 
 Обязательные для прода: `API_KEY_PEPPER` (непустой), `ADMIN_TOKEN`, `POSTGRES_URL`,
 `REDIS_URL`, `CANARY_ALERT_WEBHOOK`. Пустой `ADMIN_TOKEN` = выключенная админка, пустой
@@ -143,7 +152,8 @@ type health — `captcha:typehealth:<type>` (TTL 12 ч).
    продажи по L3 должен отреагировать (см. `docs/plan.md` §2 и открытый вопрос №7).
 
 Проверка после отката: `/readyz` 200, `make check`, один `make smoke` по затронутому типу,
-канарейка `--once` (если фикстуры есть).
+канарейка `--once` (фикстуры есть на `friendly_captcha` и `altcha`; для остальных типов
+прогон пустой и ничего не доказывает).
 
 ## 7. Ёмкость
 

@@ -1,0 +1,13 @@
+{
+  "name": "hcaptcha_http_example_com",
+  "task": {
+    "type": "hcaptcha",
+    "websiteURL": "https://example.com/",
+    "websiteKey": "10000000-ffff-ffff-ffff-000000000001"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["gRecaptchaResponse", "userAgent"]
+  },
+  "note": "hCaptcha passive test key from tests/solvers/hcaptcha/fixtures/getcaptcha_passive.json, on the control page from docs/hcaptcha-sites.md (10/10 HTTP passes recorded). Live-capable canary case."
+}

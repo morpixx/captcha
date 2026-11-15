@@ -6,8 +6,9 @@ touching code. Humans: the same rules apply, see `docs/workflow.md` for the proc
 ## What this is
 
 A captcha-solving service with a 2captcha-compatible HTTP API. One Python distribution
-(`captcha`), layered, with plugins for 62 captcha types and 12 antibot engines. Most of
-the code is adaptation to other people's protocols; the core is deliberately small.
+(`captcha`), layered, with plugins for 63 captcha types (62 vendor + the custom
+`hopscotch`) and 12 antibot engines. Most of the code is adaptation to other people's
+protocols; the core is deliberately small.
 
 Non-negotiables: the layer direction, the per-type solution shape, and the fact that a
 worker must boot without the optional `cv` extra installed.
@@ -80,30 +81,37 @@ src/captcha/
 ├── domain/              pure core: enums, task, solution, errors, pricing, lanes, profile
 ├── application/         use-case level policy (lane routing)
 ├── adapters/            transport(curl_cffi) queue(redis) storage(postgres) jssandbox
-│                        weights(s3) proxy profiles pingback
+│                        weights(s3) proxy profiles browser netguard pingback
 ├── engines/             <engine>/builder.py — payload assembly per antibot engine;
 │                        base.py, registry.py, __init__.py registers all builders
 ├── solvers/             base.py (Solver ABC), registry.py, loader.py (enrollment table),
 │                        harness.py + one package per captcha family
 ├── crypto/ behavior/    leaf libraries, no imports outside domain
 ├── observability/       logging, metrics, tracing, sentry
-└── services/            gateway, worker_http, worker_cv, worker_protocol, cli —
+└── services/            gateway, worker_http, worker_cv, worker_protocol,
+                         worker_browser, canary, pipeline, cli —
                          cli.py + __main__.py + wiring
-tests/                   tests/domain, tests/gateway, tests/application, tests/solvers/<family>
+tests/                   tests/domain, tests/gateway, tests/application, tests/solvers/<family>,
+                         tests/canary, tests/integration (needs redis + postgres)
 docs/ runbooks/ infra/   documentation, per-type runbooks, docker
 ```
 
 ## Current coverage (keep it accurate when you change it)
 
-- `CaptchaType`: 62 values. `AntibotEngine`: 12.
-- Solvers enrolled in `solvers/loader.py`: 58. Registered at runtime without extras: 56
-  (`slider` and `rotate` need opencv from `--extra cv`).
-- Every one of the 62 types has a solver. Without `--extra cv` the coverage is 60/62;
-  with it, 62/62. `experimental=True` means "protocol written, wire constants not verified
-  against a live site" — 41 of the 58 are in that state.
-- API surface: `docs/protocol.md`. Three lanes only — `http`, `cv`, `protocol`; there is no
-  browser lane and no playwright dependency.
-- Tests: 262 passing, 3 skipped without `--extra cv`.
+- `CaptchaType`: 63 values — 62 vendor types plus the custom `hopscotch`. `AntibotEngine`: 12.
+- Solvers enrolled in `solvers/loader.py`: 60. All 60 register at runtime without extras —
+  `cv2`/torch are imported lazily inside the CV paths, never at module import.
+- Every type has a solver: 63/63. `slider` solves on the numpy backend; `rotate`,
+  detection- and classification solvers import without `--extra cv` but answer `ERR_CONFIG`
+  on a task when `cv2`/torch/weights are missing.
+- `experimental=True` means "protocol written, wire constants not verified against a live
+  site": 42 of the 60 solvers, which is 38 of the 62 vendor types.
+- API surface: `docs/protocol.md`. Four lanes — `http` 21 types, `cv` 34 (+ `hopscotch`),
+  `protocol` 2, `browser` 5. The browser lane runs Camoufox, not Playwright.
+- Tests: 1924 passed. `pytest -q` on a bare box: 12 skipped — 10 are
+  `tests/integration` plus the Camoufox smoke (no Redis/Postgres/browser), 2 are
+  environment-gated (torch, jsdom). CI `checks` excludes `tests/integration`: 1924
+  passed, 2 skipped.
 
 ## Commands
 
@@ -111,17 +119,23 @@ docs/ runbooks/ infra/   documentation, per-type runbooks, docker
 uv sync --extra dev            # base + tooling; add --extra cv for torch/opencv
 make lint                      # ruff check src tests
 make fmt                       # ruff format
-make typecheck                 # mypy src
+make typecheck                 # mypy src (red outside the scoped set)
+make typecheck-core            # mypy over the modules that are green today
 make test                      # pytest -q
+make test-integration          # pytest -m integration (needs redis + postgres)
 make imports                   # import-linter: six architecture contracts
 make dev                       # docker compose: redis/pg/minio + migrate + gateway + workers
 make migrate                   # alembic upgrade head against POSTGRES_URL (no docker)
 make seed                      # create a demo account, print its clientKey
 make check                     # lint + imports + test
+make check-full                # check + typecheck-core + yamllint/actionlint + node --check
 ```
 
-CI runs `ruff`, `lint-imports`, and `pytest` on Python 3.14. CV tests need torch and run in a
-separate job later.
+CI runs four jobs on Python 3.14 (`.github/workflows/ci.yml`): `checks` (ruff, lint-imports,
+the full unit suite with `tests/integration` excluded, scoped mypy, yamllint + actionlint +
+`node --check`), `integration` (real Redis + Postgres, `pytest -m integration`), `browser`
+(a Camoufox image, `pytest -m browser tests/integration/browser`) and `security` (gitleaks,
+trivy, pip-audit). CV tests still need torch and have no CI job.
 
 ## Recipes
 

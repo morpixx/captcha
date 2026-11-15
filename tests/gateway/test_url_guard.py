@@ -287,7 +287,7 @@ async def test_create_task_accepts_public_urls_and_charges_once(wired) -> None:
     response = await _create(
         client,
         {"type": "text_captcha", "websiteURL": "https://example.com/login", "textcaptcha": "q"},
-        callbackUrl="https://client.example/cb",
+        callbackUrl="https://example.com/cb",
     )
 
     body = response.json()
@@ -317,7 +317,7 @@ async def test_legacy_in_rejects_private_urls_without_charging(wired, fields: di
     client, state = wired
     response = await _legacy(client, **fields)
 
-    assert response.text == "ERROR_BAD_PARAMETERS", response.text
+    assert response.text == "ERROR_BAD_REQUEST", response.text
     assert FakeAccountRepo.charges == []
     assert state.producer.published == []
     assert CREATED == []

@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from captcha.adapters.netguard import Resolver, ensure_public_url_async
 from captcha.domain.enums import CaptchaType, TaskStatus
 from captcha.services.gateway.type_map import normalize_task_payload
 
@@ -37,6 +38,59 @@ class TaskPayload(BaseModel):
         if isinstance(data, Mapping):
             return normalize_task_payload(data)
         return data
+
+
+#: Task fields whose value a solver or the browser lane will eventually fetch.
+#: Production contract §8: all of them go through `adapters.netguard` before
+#: the task is priced or queued.
+CLIENT_URL_FIELDS: tuple[str, ...] = (
+    "site_url",
+    "websiteURL",
+    "websiteUrl",
+    "pageurl",
+    "challenge_url",
+    "surl",
+    "api_server",
+)
+
+#: Legacy vendors send these as a bare host (FunCaptcha `surl`, GeeTest
+#: `api_server`); the solvers prepend https:// themselves, so validate the
+#: shape they will actually fetch instead of rejecting a working client.
+_BARE_HOST_URL_FIELDS = frozenset({"surl", "api_server"})
+
+
+def _url_candidate(field: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if field in _BARE_HOST_URL_FIELDS and "://" not in text:
+        return "https://" + text.lstrip("/")
+    return text
+
+
+async def validate_task_urls(
+    payload: Mapping[str, Any],
+    *,
+    resolver: Resolver | None = None,
+    callback_url: str | None = None,
+) -> None:
+    """Reject private/loopback/metadata targets before the task is queued.
+
+    Runs before pricing, so a rejected URL never costs the client anything.
+    DNS happens on a worker thread (`ensure_public_url_async`): the gateway
+    serves every account on one loop and a blocking getaddrinfo would stall it.
+    """
+    validated: set[str] = set()
+    for field in CLIENT_URL_FIELDS:
+        candidate = _url_candidate(field, payload.get(field))
+        if candidate is None or candidate in validated:
+            continue
+        await ensure_public_url_async(candidate, resolver=resolver, field=field)
+        validated.add(candidate)
+    if callback_url:
+        await ensure_public_url_async(callback_url, resolver=resolver, field="callback_url")
 
 
 class CreateTaskRequest(BaseModel):

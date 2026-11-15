@@ -1,0 +1,14 @@
+{
+  "name": "geetest_v3_slide",
+  "task": {
+    "type": "geetest_v3",
+    "websiteURL": "https://shop.test/login",
+    "gt": "gt-fixture",
+    "challenge": "22ff2f326624b638791dfdef7892700d"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["challenge", "validate", "seccode"]
+  },
+  "note": "Task values are the recorded replay constants in tests/solvers/interactive/test_geetest_flow.py and fixtures/geetest/v3_get_round.txt. No live gt/challenge pair was captured; this is a schema/replay case, not an L3 measurement."
+}

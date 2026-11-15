@@ -1,0 +1,14 @@
+{
+  "name": "geetest_v4_slide",
+  "task": {
+    "type": "geetest_v4",
+    "websiteURL": "https://shop.test/login",
+    "captcha_id": "captcha-fixture",
+    "risk_type": "slide"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["captcha_id", "lot_number", "pass_token", "gen_time", "captcha_output"]
+  },
+  "note": "Task values are the recorded replay constants in tests/solvers/interactive/test_geetest_flow.py; fixtures/geetest/v4_load.txt and v4_verify.txt pin the response shape. No live captcha_id was captured; replay case only."
+}
