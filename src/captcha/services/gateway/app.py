@@ -139,10 +139,11 @@ def sellable_types(
 ) -> frozenset[CaptchaType]:
     """Types the gateway may sell right now (contract §7).
 
-    `allow_experimental` defaults to True in Settings for the current beta, so
-    the filter only runs when an operator sets ALLOW_EXPERIMENTAL_TASKS=0. A
-    type stays sellable while it has at least one non-experimental solver; a
-    live heartbeat advertising an experimental-only type does not override it.
+    `allow_experimental` is False by default (contract §7), so an
+    experimental-only type is withheld unless an operator sets
+    ALLOW_EXPERIMENTAL_TASKS=1. A type stays sellable while it has at least one
+    non-experimental solver; a live heartbeat advertising an experimental-only
+    type does not override the gate.
     """
     available = _available_types(frozenset(registry.all_types()), live_types, extra_types)
     if allow_experimental:

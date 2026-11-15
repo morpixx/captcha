@@ -22,10 +22,10 @@ class Settings(BaseSettings):
     # semicolon separated. Unknown names are ignored; heartbeat still owns the
     # default path, this only covers a type the registry cannot see.
     captcha_extra_types: str = Field(default="", alias="CAPTCHA_EXTRA_TYPES")
-    # Contract §7 freezes ALLOW_EXPERIMENTAL_TASKS=0 for production. The current
-    # beta ships it as True so the 41 experimental solvers stay sellable; this
-    # is a deliberate, temporary divergence — set it to 0 to restore §7.
-    allow_experimental_tasks: bool = Field(default=True, alias="ALLOW_EXPERIMENTAL_TASKS")
+    # Contract §7: off by default, so experimental-only types are not sold.
+    # Beta may set ALLOW_EXPERIMENTAL_TASKS=1 as an explicit override; the
+    # gateway still re-reads it on every capability refresh.
+    allow_experimental_tasks: bool = Field(default=False, alias="ALLOW_EXPERIMENTAL_TASKS")
 
     # redis
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
