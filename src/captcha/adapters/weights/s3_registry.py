@@ -2,11 +2,15 @@
 
 Bucket layout:
     <bucket>/<name>/<version>/meta.json
-    <bucket>/<name>/<version>/weights.<ext>
+    <bucket>/<name>/<version>/weights.<ext>          single-slot models
+    <bucket>/<name>/<version>/{model.safetensors,config.json,release.json}
+                                                     multi-file bundles
     <bucket>/<name>/latest       object body = version string
 
 The 'latest' pointer is read on every get_meta call so a new version in the
-bucket is picked up without a client restart.
+bucket is picked up without a client restart. Bundle artifacts go through
+BundleStore (artifact.py + bundle.py); download() still returns the primary
+file so framework loaders do not care which layout produced it.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import io
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +30,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from captcha.domain.errors import ConfigError, ModelInferenceError
 
+from .artifact import Artifact, ArtifactCheck, sha256_file
+from .bundle import BundleStore
 from .loaders import load_hf, load_onnx, load_safetensors, load_torch
 from .meta import ModelMeta, decode_meta
 
@@ -48,12 +54,15 @@ class Registry:
         region: str = "us-east-1",
         cache_dir: str | Path = "./models-cache",
         verify_tls: bool = True,
+        client: Any | None = None,
     ) -> None:
         self.bucket = bucket
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self._s3 = boto3.client(
+        # client= is the test seam: a fake with put_object/get_object/download_fileobj
+        # is enough to exercise publish/check without a bucket.
+        self._s3 = client if client is not None else boto3.client(
             "s3",
             endpoint_url=s3_endpoint,
             aws_access_key_id=access_key,
@@ -62,6 +71,7 @@ class Registry:
             config=BotoConfig(signature_version="s3v4", retries={"max_attempts": 5, "mode": "standard"}),
             verify=verify_tls,
         )
+        self._bundles: BundleStore | None = None
 
         self._meta_cache: dict[tuple[str, str], ModelMeta] = {}
         self._meta_lock = threading.RLock()
@@ -144,15 +154,79 @@ class Registry:
             return self.get_meta(name, canary_name)
         return latest
 
+    # ---- multi-file artifacts -------------------------------------------
+
+    @property
+    def bundles(self) -> BundleStore:
+        """Lazily built bundle publisher used by publish_artifact/get_artifact/check_artifact."""
+        if self._bundles is None:
+            self._bundles = BundleStore(
+                self._s3,
+                self.bucket,
+                cache_dir=self.cache_dir,
+                meta_reader=self.get_meta,
+                latest_writer=self.set_latest,
+            )
+        return self._bundles
+
+    def publish_artifact(
+        self,
+        name: str,
+        version: str,
+        source: str | Path | Mapping[str, bytes | Path | str],
+        *,
+        artifact: str | None = None,
+        labels: dict[str, str] | None = None,
+        input_schema: dict[str, Any] | None = None,
+        output_schema: dict[str, Any] | None = None,
+        canary_rollout: float = 0.0,
+        set_latest: bool = True,
+    ) -> ModelMeta:
+        """Upload a multi-file bundle: model.safetensors + config.json + release.json.
+
+        'source' is a directory (extra files are rejected) or an explicit
+        {file name: bytes | path} mapping. Every file gets its own sha256 in
+        meta.json; the primary file is what download() later returns.
+        """
+        return self.bundles.publish(
+            name,
+            version,
+            source,
+            artifact=artifact,
+            labels=labels,
+            input_schema=input_schema,
+            output_schema=output_schema,
+            canary_rollout=canary_rollout,
+            set_latest=set_latest,
+        )
+
+    def get_artifact(self, name: str, version: str = "latest", *, force: bool = False) -> Artifact:
+        """Download + verify every file of a bundle and parse config/release."""
+        meta = self.get_meta(name, version)
+        fetched = self.bundles.fetch(meta, force=force)
+        with self._meta_lock:
+            self._meta_cache[(name, meta.version)] = meta
+        return fetched
+
+    def check_artifact(self, name: str, version: str = "latest", *, force: bool = True) -> ArtifactCheck:
+        """Whole-bundle version of check-model: per-file sha256, required set, JSON shape."""
+        return self.bundles.check(name, version, force=force)
+
     # ---- download + cache ----------------------------------------------
 
     def download(self, name: str, version: str = "latest", *, force: bool = False) -> Path:
-        """Download weights, verify sha256, return local path. Cache-hits are free."""
+        """Download weights, verify sha256, return local path. Cache-hits are free.
+
+        For a bundle this verifies and caches every file, then returns the primary
+        one, so callers (and check-model) see the whole artifact validated.
+        """
         meta = self.get_meta(name, version)
+        if meta.layout == "bundle":
+            return self.bundles.fetch(meta, force=force).primary_path
         local = self.cache_dir / name / meta.version / Path(meta.s3_key).name
         local.parent.mkdir(parents=True, exist_ok=True)
 
-        if not force and local.exists() and _sha256_file(local) == meta.sha256:
+        if not force and local.exists() and sha256_file(local) == meta.sha256:
             log.debug("models.cache.hit", name=name, version=meta.version, path=str(local))
             return local
 
@@ -219,10 +293,24 @@ class Registry:
             <name>/<version>/weights.<ext>
             <name>/<version>/meta.json
             <name>/latest                     (body = version string)
+
+        Pointing `weights_path` at a directory publishes a bundle instead (see
+        publish_artifact); the directory's own file set decides the framework,
+        so `framework` is ignored in that case.
         """
         from .meta import encode_meta
 
         path = Path(weights_path)
+        if path.is_dir():
+            return self.publish_artifact(
+                name,
+                version,
+                path,
+                labels=labels,
+                input_schema=input_schema,
+                output_schema=output_schema,
+                set_latest=set_latest,
+            )
         if not path.exists():
             raise ConfigError("weights file missing", context={"path": str(path)})
 
@@ -324,10 +412,3 @@ class Registry:
                             log.error("models.watch.callback_fail", name=name, error=str(e))
             self._watch_stop.wait(interval)
 
-
-def _sha256_file(path: Path, chunk: int = 1024 * 1024) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for buf in iter(lambda: f.read(chunk), b""):
-            h.update(buf)
-    return h.hexdigest()
