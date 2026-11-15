@@ -239,8 +239,11 @@ HMAC-SHA-256 от challenge на секрете **сайта**, нужна то�
   `lot_number`, `payload`/`process_token`/`payload_protocol`/`risk_type`/`pt`,
   `userresponse = left/1.0059466666666665+2` и GET `/verify`.
   Осталось снять с live: `pt=2` (не публичен), `ep.v` v3 и актуальность алфавита энкодера — см. runbooks.
-- Билдеры `{datadome,kasada,perimeterx,imperva}`: ключевые поля (`jspl`-сид, `x-kpsdk-st`/`h`, `ft`/`tag`, reese)
-  уже описаны публично — FILL'ы закрываются чтением, а не реверсом с нуля.
+- Билдеры `{akamai,kasada,datadome}`: FILL-стабы закрыты прогоном вендорского скрипта в V8
+  (`engines/{akamai,kasada}/harness.js`); sensor_data и `/tl`-тело берутся из самого скрипта, а не собираются
+  по догадке. Kasada cd честно только в payload-mode: ответы PoW не восстанавливаются из wire — `engines/kasada/pow.py`.
+- Билдеры `{perimeterx,imperva}`: ключевые поля (`ft`/`tag`, reese) уже описаны публично —
+  FILL'ы закрываются чтением, а не реверсом с нуля.
 ## Не удалось прочитать
 
 - deepwiki.com/xKiian/GeekedTest/* — 429, Vercel Security Checkpoint (нужен JS).
