@@ -19,6 +19,14 @@ or lend them read-only from an existing tree with --node-path D:/riot-research/n
 One deliberate choice: every run gets a fresh HTTP client. The transport is
 session-per-task, and sharing one session across runs would let hCaptcha pin a
 single TLS/cookie state and inflate the pass rate.
+
+Context boundary: hCaptcha binds the token to the sitekey host and to the page
+that minted it; the n-token is a serialized fingerprint, not a transferable
+ciphertext. This probe mints in jsdom with `href=https://host/` and no vm_data
+from the target page, so a `challenge` on a hardened sitekey is expected and
+must not be read as a site pass rate. For those hosts the production path is the
+browser lane on the same origin (D:/riot-research/riot_hcaptcha_minter.py loads
+the account page, injects api.js there and gets a P1_ token with host=account...).
 """
 
 from __future__ import annotations
