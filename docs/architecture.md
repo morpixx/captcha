@@ -360,9 +360,9 @@ detection- и classification-солверы импортируются, но о�
    `adapters/transport/guard.py` и `redirects.py` проверяют каждый hop, `curl.py` идёт с
    `allow_redirects=False`, навигацию browser-лейна проверяет `provider.py`. Юнит-тесты
    покрывают private/metadata/non-http; реальные редирект-цепочки на живых хостах — нет.
-6. **Runbook на каждый тип.** Есть шаблон, операционные runbook-и и типовые на 36 из
-   62 вендорских типов плюс `hopscotch`; остальные 26 заведены в `runbooks/README.md` со
-   статусом «pending».
+6. **Runbook на каждый тип.** 63/63: 62 вендорских типа плюс `hopscotch`;
+   `runbooks/README.md` — 0 pending. Наличие runbook'а не означает L3: живой
+   канарейки по-прежнему 0/62.
 7. **Антибот: wire собран, живого реверса нет.** Вызовов `not_implemented()` нет (helper в
    `solvers/antibot/_base.py:161` — мёртвый код); все 12 движков собирают payload и
    результат, но схемы полей помечены `# FILL:`, живой прогон не подтверждён — отсюда

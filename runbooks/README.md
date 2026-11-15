@@ -186,13 +186,13 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
   `rotate` падает уже на задаче с `ERR_CONFIG` (классический путь требует OpenCV).
   `baseline.md` — снимок и не переписывается; `AGENTS.md` и `docs/architecture.md`
   приведены к факту, детали — здесь и в [rotate.md](rotate.md) / [slider.md](slider.md).
-- **cv-воркер не даёт `http`/`browser`.** `services/worker_cv/worker.py` собирает
-  `SolverContext(models=…, config=…)` без `http`, `browser`, `js_runtime`, `sensors`
-  и не обрабатывает `ERR_NEEDS_BROWSER`. Последствия по типам:
-  `mtcaptcha`, `binance`, `basilisk` (каталог — `cv`, а `solve_http` требует
-  `ctx.http`) отвечают `ERR_CONFIG` до первого запроса; `tencent`, `yidun`,
-  `atbcaptcha` не могут эскалировать в браузер из этого лейна. Подробности — в §7
-  перечисленных файлов.
+- **cv-воркер даёт per-task `http`.** `_run_one` вызывает
+  `context.task_context(self._ctx, self._http_factory, task)`, который делает
+  `replace(template, http=Client(...))`; клиент несёт proxy/UA/cookies задачи и
+  закрывается в `finally`. Поэтому `mtcaptcha`, `binance`, `basilisk`,
+  `cutcaptcha` получают `ctx.http`. `tencent`/`yidun`/`atbcaptcha` вообще не в cv,
+  а в browser-лейне; `alibaba`/`hunt` — в http. Ложные §7-записи в старых
+  runbook'ах исправляются отдельным docs-проходом.
 - **Форма ответа `awswaf`/`shein`.** Каталог объявляет `AWSWAF` (`captcha_voucher`/
   `existing_token`) и `COORDS` (`coordinates`), а grid-солверы возвращают `indices`;
   `domain/solution.py` уходит в generic-фолбэк и отдаёт `{"indices": [...]}`. Пока обмен
