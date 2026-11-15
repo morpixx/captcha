@@ -71,7 +71,8 @@ src/captcha/
 │   ├── detection/             click, bbox, draw, drag + _yolo
 │   ├── score_based/           recaptcha_v3.py, turnstile.py
 │   ├── recaptcha/             v2_audio.py
-│   ├── funcaptcha/            funcaptcha.py, bda.py
+│   ├── funcaptcha/            funcaptcha.py, browser.py, session.py, variants.py,
+│   │                          wire.py, settings.py, bda.py, sensor.py, fields.py, devices.py
 │   ├── antibot/               {cloudflare,akamai,datadome,kasada,perimeterx,imperva,castle,tspd,cybersiara,twitch_integrity,botguard,botdeflector}/
 │   └── interactive/           {mtcaptcha,prosopo,captchafox,vk,yandex,temu,binance,hunt,basilisk,alibaba,tencent,yidun,cutcaptcha,atbcaptcha}/
 ├── crypto/                    aes, rsa, xor, hmac, compress — листовые утилиты
