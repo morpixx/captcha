@@ -24,12 +24,15 @@ class WebhookAlerter:
         gateway_url: str = "",
         hostname: str | None = None,
         timeout_sec: float = 10.0,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.webhook_url = webhook_url
         self.pass_threshold = pass_threshold
         self.gateway_url = gateway_url
         self.hostname = hostname or socket.gethostname()
         self.timeout_sec = timeout_sec
+        #: injected by tests; production goes through the real network
+        self.transport = transport
 
     async def maybe_alert(self, report: SuiteReport) -> bool:
         """Returns True iff an alert was fired."""
@@ -55,7 +58,7 @@ class WebhookAlerter:
 
     async def _post(self, payload: dict[str, Any]) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_sec) as c:
+            async with httpx.AsyncClient(timeout=self.timeout_sec, transport=self.transport) as c:
                 resp = await c.post(self.webhook_url, json=payload)
         except httpx.HTTPError as exc:
             logger.error("canary.alert.transport_failed", error=str(exc))
