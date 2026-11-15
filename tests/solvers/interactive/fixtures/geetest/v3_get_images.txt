@@ -1,0 +1,1 @@
+geetest_1700000000002({"status":"success","data":{"bg":"bg/v3-bg.webp","fullbg":"bg/v3-fullbg.webp","slice":"slice/v3-slice.png","c":[12,58,98,36,43,95,62,15,12],"s":"a1b2c3","challenge":"22ff2f326624b638791dfdef7892700d9w"}})

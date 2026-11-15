@@ -234,11 +234,11 @@ HMAC-SHA-256 от challenge на секрете **сайта**, нужна то�
 | Friendly Captcha | v1 HTTP-only; v2 браузер | friendlycaptcha-solver (2026-09) |
 ## Что в наших файлах уже неверно
 
-- `geetest/payload.py`: первая половина `w` — не голый hex (кастомный энкодер); у второго `w` v3 нет RSA-хвоста;
-  `V4_RSA_MODULUS_HEX` пуст при известном публичном модуле; `V3_SDK_VERSION="9.0.7"` не подтверждён;
-  `userresponse` v4 = `left/1.0059466666666665+2`.
-- `V4_LOT_KEY_GROUPS`: две группы вместо трёх.
-- `v4.py`: нет `payload`, `process_token`, `payload_protocol`, `risk_type`, `pt`.
+- GeeTest v3/v4: закрыто в `feat/geetest` (2026-11-15) — v3 использует модифицированный base64,
+  H/getAA и answer-`w` без RSA-хвоста; v4 получил публичный RSA-модуль, три группы срезов
+  `lot_number`, `payload`/`process_token`/`payload_protocol`/`risk_type`/`pt`,
+  `userresponse = left/1.0059466666666665+2` и GET `/verify`.
+  Осталось снять с live: `pt=2` (не публичен), `ep.v` v3 и актуальность алфавита энкодера — см. runbooks.
 - Билдеры `{datadome,kasada,perimeterx,imperva}`: ключевые поля (`jspl`-сид, `x-kpsdk-st`/`h`, `ft`/`tag`, reese)
   уже описаны публично — FILL'ы закрываются чтением, а не реверсом с нуля.
 ## Не удалось прочитать

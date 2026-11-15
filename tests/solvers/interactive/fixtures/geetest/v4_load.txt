@@ -1,0 +1,1 @@
+geetest_1700000000010({"status":"success","data":{"lot_number":"f4744c44df4541b3be48c5c270ced20b","pow_detail":{"version":"1","bits":4,"hashfunc":"md5","datetime":"2026-10-30T12:00:00.000000+08:00"},"bg":"bg/v4-bg.webp","slice":"slice/v4-slice.png","captcha_type":"slide","risk_type":"slide","payload":"payload-fixture","process_token":"process-fixture","pt":"1"}})
