@@ -33,17 +33,17 @@ Riot/Steam по HTTP не собирается, поэтому hCaptcha-family �
 
 | лейн | воркер | что внутри | типов | ключевые настройки |
 |---|---|---|---|---|
-| `http` | `services/worker_http` | `curl_cffi` + JA3/JA4-профили, JS-песочница, сенсор-билдеры | 21 | `WORKER_HTTP_CONCURRENCY=512`, `WORKER_HTTP_IMPERSONATE=chrome124` |
-| `cv` | `services/worker_cv` | torch/torchvision/opencv/whisper, реестр весов | 34 (+ `hopscotch`) | `WORKER_CV_DEVICE=cpu` (на GPU-ноде — `cuda`) |
+| `http` | `services/worker_http` | `curl_cffi` + JA3/JA4-профили, JS-песочница, сенсор-билдеры | 25 | `WORKER_HTTP_CONCURRENCY=512`, `WORKER_HTTP_IMPERSONATE=chrome124` |
+| `cv` | `services/worker_cv` | torch/torchvision/opencv/whisper, реестр весов | 28 (27 + `hopscotch`) | `WORKER_CV_DEVICE=cpu` (на GPU-ноде — `cuda`) |
 | `protocol` | `services/worker_protocol` | PoW, сборка сенсоров, чистый CPU | 2 | `WORKER_PROTOCOL_CONSUMERS=2` |
-| `browser` | `services/worker_browser` | Camoufox, одна свежая сессия на задачу | 5 | `WORKER_BROWSER_SESSIONS=12`, `WORKER_BROWSER_MIN_FREE_MB=2048`, `WORKER_BROWSER_TASK_TIMEOUT_SEC=240` |
+| `browser` | `services/worker_browser` | Camoufox, одна свежая сессия на задачу | 8 | `WORKER_BROWSER_SESSIONS=12`, `WORKER_BROWSER_MIN_FREE_MB=2048`, `WORKER_BROWSER_TASK_TIMEOUT_SEC=240` |
 
 Раскладка по `domain/catalog.py`, проверяется одной командой:
 
 ~~~powershell
 $env:PYTHONPATH='src'
 uv run python -c "from captcha.domain.enums import CaptchaType; from captcha.domain import catalog; print({l: len([t for t in CaptchaType if catalog.lane_for(t) == l]) for l in catalog.LANES})"
-# {'http': 21, 'cv': 35, 'protocol': 2, 'browser': 5}    (cv = 34 вендорских + hopscotch)
+# {'http': 25, 'cv': 28, 'protocol': 2, 'browser': 8}    (cv = 27 вендорских + hopscotch)
 ~~~
 
 Лейн — свойство типа, не клиента: `application/route_task.py` читает каталог и кладёт
@@ -72,7 +72,7 @@ hCaptcha-family уходит в браузер, а тип, у которого �
 src/captcha/
 ├── config.py                  Settings (pydantic-settings), читается только в services
 ├── domain/                    ЧИСТОЕ ЯДРО, без I/O
-│   ├── enums.py               CaptchaType (62), AntibotEngine (12), SolveMode, TaskStatus, Priority
+│   ├── enums.py               CaptchaType (63: 62 vendor + hopscotch), AntibotEngine (12), SolveMode, TaskStatus, Priority
 │   ├── catalog.py             TypeSpec (lane, price, solution_kind) — одна строка на тип
 │   ├── task.py                Task, TaskEnvelope, SolverResult, MAX_LANE_HOPS, new_task_id
 │   ├── solution.py            проекция SolverResult → ключи 2captcha (dispatch по solution_kind)
@@ -251,18 +251,24 @@ SETEX captcha:lane:<lane>:<worker> 90 1      # жив ли воркер
 SADD  captcha:cap:<lane> <type>...           # что он умеет
 ~~~
 
-TTL 90 с, бит раз в 30 с. Битят два лейна: `worker_http` (`worker_http/heartbeat.py`) и
-`worker_browser` (`worker_browser/heartbeat.py`); `worker_cv` и `worker_protocol` heartbeat
-не пишут. Просроченный heartbeat убирает воркера из маршрута за один TTL; набор типов живёт
-дольше, но лейн без живого heartbeat игнорируется целиком, поэтому устаревший набор не может
-«воскресить» мёртвый лейн. `/readyz` отвечает 503, если Redis, Postgres или ни одного живого
-heartbeat.
+TTL 90 с, бит раз в 30 с. Битят все четыре лейна: `worker_http`
+(`worker_http/heartbeat.py`), `worker_cv`, `worker_protocol` и `worker_browser`
+(`LaneHeartbeat`). Просроченный heartbeat убирает воркера из маршрута за один TTL.
+`live_types()` объединяет наборы только живых лейнов и принимает тип только от лейна,
+который владеет им по каталогу; тип с `requires_browser()` — только от живого
+`browser`-heartbeat. Поэтому HTTP-воркер не может продать браузерный тип, даже если старый
+или ошибочный набор перечислит все солверы: `_http_capabilities()` фильтрует по
+`lane == "http" and not requires_browser`, а реестр capabilities режет такой тип ещё раз.
+`/readyz` отвечает 503, если Redis, Postgres или ни одного живого heartbeat.
 
-Продажу heartbeat ограничивает только для `browser`: `gateway/app.py: _available_types`
-отдаёт `(реестр − browser-типы) ∪ live_types`, то есть дорогой лейн продаётся лишь при
-свежем heartbeat, а остальные типы — из реестра. Live-набор читается один раз в
-`build_state`, поэтому смерть browser-воркера после старта gateway видна только новому
-heartbeat-опросу при следующем рестарте.
+Продажу heartbeat ограничивает для `browser`-лейна и типов с `needs_browser`
+(`turnstile`, `turnstile_invisible`, `cf_challenge`): `gateway/app.py: _available_types`
+отдаёт `(реестр − browser_only) ∪ live_types`, где `browser_only` — это
+`lane == "browser"` или `needs_browser`. Остальные типы (http/cv/protocol) продаются из
+реестра, даже если их лейн не битит, — это отступление от §2 контракта, зафиксированное в
+«Открытые пункты». Live-набор перечитывается каждые 20 с (`CAPTCHA_TYPES_REFRESH_SEC`,
+`LiveTypesRefresher`), поэтому умерший browser-воркер перестаёт продаваться в пределах
+TTL + один тик.
 
 ## Canary
 
@@ -273,9 +279,11 @@ heartbeat-опросу при следующем рестарте.
 `captcha_canary_pass_rate{type}`, `captcha_type_health{type}`. Ниже порога
 `CANARY_PASS_THRESHOLD` (0.9) — POST в `CANARY_ALERT_WEBHOOK`.
 
-Фикстуры в репозитории: `tests/canary/fixtures/` — `friendly_captcha_v1` и `altcha_v1`,
-то есть 2 типа из 62; `tests/canary/test_fixtures.py` пинит непустой набор и проверяет, что
-payload парсится тем солвером, который его получит. Остальные 60 типов фикстур не имеют.
+Фикстуры в репозитории: `tests/canary/fixtures/` — 10 кейсов на 10 типов (`altcha`,
+`datadome`, `friendly_captcha`, `funcaptcha`, `geetest_v3`, `geetest_v4`, `hcaptcha`,
+`recaptcha_v2`, `recaptcha_v3`, `turnstile`); `tests/canary/test_fixtures.py` пинит непустой
+набор и проверяет, что payload парсится тем солвером, который его получит. Остальные 53 типа
+(52 вендорских) фикстур не имеют.
 
 Пустой набор фикстур — отдельный случай: отчёт получается `pass_rate=1.0`, алерт уходит
 только как `reason=no_fixtures` при настроенном webhook, а `--once` возвращает 0. Поэтому
@@ -320,42 +328,44 @@ SOLVERS: 60 записей
 
 Импорт ≠ работа: `slider` решает на numpy-бэкенде (`gap_detect.BACKENDS`), а `rotate`,
 detection- и classification-солверы импортируются, но отвечают на задаче `ERR_CONFIG` без
-`cv2`/торча/весов. `experimental=True` стоит у 42 из 60 солверов — это 38 вендорских типов
-плюс `hopscotch`. `docs/baseline.md` снят раньше (56 загруженных, 60/62) и не
-переписывается. Если солвера нет, gateway отбивает тип на входе (`ERROR_TASK_NOT_SUPPORTED`)
-и не списывает деньги.
+`cv2`/торча/весов. `experimental=True` стоит у 42 из 60 солверов; экспериментальными (без
+другого солвера) остаются 38 из 62 вендорских типов. `docs/baseline.md` снят раньше
+(56 загруженных, 60/62) и не переписывается. Если солвера нет, gateway отбивает тип на
+входе (`ERROR_TASK_NOT_SUPPORTED`) и не списывает деньги.
 
-## Что ещё не сделано
+## Открытые пункты
 
-1. **Продажа по heartbeat покрывает только `browser`.** `_available_types`
-   (`services/gateway/app.py`) продаёт типы `browser`-лейна лишь при свежем heartbeat, а
-   остальные берёт из реестра. `CAPTCHA_EXTRA_TYPES` (контракт §7) не существует; live-набор
-   читается один раз в `build_state`, поэтому упавший после старта browser-воркер не убирает
-   свои типы до рестарта gateway; `worker_cv` и `worker_protocol` heartbeat не пишут.
+1. **Продажа по heartbeat покрывает только browser-gated типы.** `_available_types`
+   (`services/gateway/app.py`) не продаёт типы `browser`-лейна и типы с `needs_browser` без
+   свежего browser-heartbeat, а остальные берёт из реестра — это отступление от §2
+   контракта (там тип принимается только по свежему heartbeat своего лейна). `live_types()`
+   режет набор по лейну-владельцу и принимает browser-gated тип только от `browser`, так что
+   HTTP-heartbeat не может продать браузерный тип.
 2. **`ALLOW_EXPERIMENTAL_TASKS` реализован, но в beta включён.** `config.py`
    (`allow_experimental_tasks`, default `True`) и `sellable_types` фильтруют
    experimental-only типы только при `0`; `worker_http/worker.py` по-прежнему выбирает
    солвер с `allow_experimental=True`. С `0` из 62 вендорских типов продаются 24 — у
    остальных 38 единственный солвер помечен `experimental`. Контракт §7 требует `0` в
-   проде; переменной нет в `.env.example`.
-3. **TLS-ингресс есть.** `infra/caddy/Caddyfile` + сервис `caddy` — единственный с
+   проде; переменная есть в `.env.example` (beta `1`, прод `0`), дефолт остаётся `True`.
+3. **TLS-ингресс есть.** `infra/caddy/Caddyfile` + сервис `caddy` — единственный сервис с
    published ports (80/443): ACME при заданном `CAPTCHA_DOMAIN`, иначе внутренний CA;
    gateway торчит только `expose: 8080`. Дев-оверлей (`docker-compose.dev.yml`) выключает
    Caddy профилем `edge` и публикует `127.0.0.1:8080`. Прод-схема — `runbooks/deploy.md`.
 4. **worker-browser и canary в compose, но за профилями** `browser` и `canary`, поэтому
    `make dev` их не поднимает: browser-ноде нужен camoufox и ~16 ГБ RAM. Фикстуры canary
    монтируются read-only из `./tests/canary/fixtures`.
-5. **netguard не на границе gateway — в работе.** Модуль и тесты есть
-   (`adapters/netguard.py`, `tests/adapters/test_netguard.py`), вызовы — только браузерная
-   навигация (`adapters/browser/provider.py`). `pageurl`, `websiteURL`, `challenge_url`,
-   `surl`, `api_server` из `createTask` доходят до HTTP-солверов без проверки; ветка
-   `feat/netguard-http` не смержена; в `SECURITY.md` §8 это открытый пункт 1.
+5. **netguard подключён, живые цепочки редиректов не прогонялись.** `validate_task_urls()`
+   вызывается в gateway (`routes/tasks.py`, `routes/legacy.py`) до списания,
+   `adapters/transport/guard.py` и `redirects.py` проверяют каждый hop, `curl.py` идёт с
+   `allow_redirects=False`, навигацию browser-лейна проверяет `provider.py`. Юнит-тесты
+   покрывают private/metadata/non-http; реальные редирект-цепочки на живых хостах — нет.
 6. **Runbook на каждый тип.** Есть шаблон, операционные runbook-и и типовые на 36 из
    62 вендорских типов плюс `hopscotch`; остальные 26 заведены в `runbooks/README.md` со
    статусом «pending».
-7. **Антибот: wire собран, живого реверса нет.** `not_implemented()` остался только у
-   `botdeflector`; остальные 11 движков собирают payload и результат, но схемы полей
-   помечены `# FILL:`, живой прогон не подтверждён — отсюда `experimental=True`.
+7. **Антибот: wire собран, живого реверса нет.** Вызовов `not_implemented()` нет (helper в
+   `solvers/antibot/_base.py:161` — мёртвый код); все 12 движков собирают payload и
+   результат, но схемы полей помечены `# FILL:`, живой прогон не подтверждён — отсюда
+   `experimental=True`.
 8. **ML: весов нет.** Код классификации/детекции/поворота написан; что учить и как положить
    в бакет — `docs/ml.md`, `make expected-models`, `make publish-model`.
 9. **`SolverResult` — один struct** с семью опциональными полями; варианты

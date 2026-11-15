@@ -105,12 +105,14 @@ docs/ runbooks/ infra/   documentation, per-type runbooks, docker
   detection- and classification solvers import without `--extra cv` but answer `ERR_CONFIG`
   on a task when `cv2`/torch/weights are missing.
 - `experimental=True` means "protocol written, wire constants not verified against a live
-  site": 42 of the 60 solvers, which is 38 of the 62 vendor types.
-- API surface: `docs/protocol.md`. Four lanes — `http` 21 types, `cv` 34 (+ `hopscotch`),
-  `protocol` 2, `browser` 5. The browser lane runs Camoufox, not Playwright.
-- Tests: 1924 passed. `pytest -q` on a bare box: 12 skipped — 10 are
+  site": 42 of the 60 solvers; 38 of the 62 vendor types have no non-experimental solver.
+- API surface: `docs/protocol.md`. Four lanes — `http` 25 types, `cv` 28 (27 + `hopscotch`),
+  `protocol` 2, `browser` 8. The browser lane runs Camoufox, not Playwright.
+- Browser-gated types (`browser` lane and `needs_browser`) are sellable only while a browser
+  worker beats: an HTTP heartbeat cannot advertise them (`CapabilityRegistry.live_types`).
+- Tests: 2448 passed. `pytest -q` on a bare box: 12 skipped — 10 are
   `tests/integration` plus the Camoufox smoke (no Redis/Postgres/browser), 2 are
-  environment-gated (torch, jsdom). CI `checks` excludes `tests/integration`: 1924
+  environment-gated (torch, jsdom). CI `checks` excludes `tests/integration`: 2448
   passed, 2 skipped.
 
 ## Commands

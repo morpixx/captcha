@@ -73,10 +73,14 @@
   содержать токен;
 - резолвер инъектируется, поэтому тесты не ходят в DNS (`tests/adapters/test_netguard.py`).
 
-**Статус: реализовано, но ещё не подключено** к путям gateway/солверов. Контракт §8 требует
-проверять `pageurl`, `websiteURL`, `challenge_url`, `surl`, `api_server`; пока вызов
-`ensure_public_url` в этих путях отсутствует. До подключения SSRF-защита — свойство модуля, а
-не сервиса. Владельцы: browser-core (модуль) + api-compat/security (вызовы).
+**Статус: подключено.** Gateway проверяет `pageurl`, `websiteURL`, `challenge_url`, `surl`,
+`api_server` и `callbackUrl` через `validate_task_urls()` (`services/gateway/schemas.py`) в
+`routes/tasks.py` и `routes/legacy.py` до pricing/списания. Transport проверяет стартовый URL
+и каждый redirect-hop (`adapters/transport/guard.py`, `redirects.py`), `curl.Client` идёт с
+`allow_redirects=False`; browser-лейн проверяет навигацию (`provider.py`). Тесты —
+`tests/gateway/test_netguard_urls.py`, `tests/adapters/test_netguard*.py`,
+`tests/adapters/test_transport_redirects.py`. Живые редирект-цепочки на реальных хостах не
+прогонялись.
 
 ## 4. Redaction
 
@@ -120,10 +124,11 @@
 
 ## 6. TLS и сеть
 
-- Контракт §9 требует TLS на входе. **В репозитории ingress-прокси нет**: `infra/` содержит
-  только Dockerfile, `docker-compose.yml` публикует gateway на `:8080` без TLS. Прод-схема
-  (Caddy/nginx + сертификаты, gateway только во внутренней сети) описана в
-  `runbooks/deploy.md`; она обязательна, но не является частью дерева.
+- Контракт §9 требует TLS на входе. **Ingress есть в репозитории**: `infra/caddy/Caddyfile`
+  и сервис `caddy` в `docker-compose.yml` — единственный сервис с published ports (80/443), ACME при
+  заданном `CAPTCHA_DOMAIN`, иначе внутренний CA. Gateway наружу не публикуется
+  (`expose: 8080`); дев-оверлей выключает Caddy профилем `edge`, прод-схема —
+  `runbooks/deploy.md`.
 - Postgres/Redis/MinIO в compose слушают на всех интерфейсах с дефолтными паролями — это
   dev-стенд. В проде они не публикуются наружу.
 - Gateway ходит наружу только через `curl_cffi`/`httpx` с прокси задачи; своего
@@ -141,16 +146,14 @@
 
 ## 8. Известные ограничения и риски
 
-1. **netguard не подключён** (§3) — SSRF-поверхность открыта до интеграции.
-2. **TLS-ингресс не в репозитории** (§6).
-3. **`getTaskResult` отдаёт внутренние коды** (`ERR_*`) вместо публичных — не утечка
+1. **`getTaskResult` отдаёт внутренние коды** (`ERR_*`) вместо публичных — не утечка
    секретов, но расхождение с протоколом; см. `docs/protocol.md`.
-4. **URL в логах навигации** (§4).
-5. **`is_sensitive_key` матчит по префиксу `proxy`** — ключ вроде `proxyFoo` тоже
+2. **URL в логах навигации** (§4).
+3. **`is_sensitive_key` матчит по префиксу `proxy`** — ключ вроде `proxyFoo` тоже
    вырезается. Это в безопасную сторону, но полезно знать при добавлении полей.
-6. **Пустой `CANARY_FIXTURES_DIR`** даёт `pass_rate=1.0` — «зелёная» канарейка без
+4. **Пустой `CANARY_FIXTURES_DIR`** даёт `pass_rate=1.0` — «зелёная» канарейка без
    измерения. Эксплуатационно это риск ложного спокойствия (`runbooks/canary.md`).
-7. **Браузерный лейн — самая дорогая поверхность**: каждая задача запускает процесс и
+5. **Браузерный лейн — самая дорогая поверхность**: каждая задача запускает процесс и
    профиль. DoS-вектор — заваливание браузерными типами; сдерживается квотами аккаунта и
    RAM-guard-ом, но не глобальным лимитом на лейн.
 
