@@ -18,7 +18,9 @@ three operations the HTTP solver needs:
   one jsdom realm per build+fingerprint (max 4, oldest closed first).
 - `realm.js` - the browser surface the bundle probes: `navigator`, `screen`,
   2d canvas (via `node-canvas`, wired by jsdom), a WebGL stub, WebCrypto,
-  `atob`/`btoa`, `fetch`.
+  `atob`/`btoa`, `fetch`. jsdom's virtual console is swallowed on purpose:
+  bundles log (Steam's hsw prints `undefined` after every solve) and stdout is
+  the protocol channel; `HCAPTCHA_JS_DEBUG=1` routes console output to stderr.
 - `runner.py` - Python side (`JsBundleRunner`): async subprocess, request lock,
   stderr drain, base64 framing, domain errors.
 
@@ -42,3 +44,8 @@ is available; without it the bundle sees `null`.
 
 Set `HCAPTCHA_JS_DEBUG=1` in the worker environment to get full stacks on
 stderr instead of the one-line error that crosses the pipe.
+## Cache
+
+Fetched bundles are cached for 12h under `.cache/` (gitignored).
+`HCAPTCHA_JS_CACHE_DIR` points the cache somewhere else - the worker regression
+test uses it to plant a local bundle, so it never touches the network.

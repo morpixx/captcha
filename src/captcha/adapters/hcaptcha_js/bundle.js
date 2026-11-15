@@ -17,7 +17,9 @@ const vm = require("node:vm");
 const nodeCrypto = require("node:crypto");
 const { createRealm, whenReady } = require("./realm");
 
-const CACHE_DIR = path.join(__dirname, ".cache");
+const CACHE_DIR = process.env.HCAPTCHA_JS_CACHE_DIR
+  ? path.resolve(process.env.HCAPTCHA_JS_CACHE_DIR)
+  : path.join(__dirname, ".cache");
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_BUNDLE_BYTES = 10 * 1024 * 1024;
@@ -128,8 +130,19 @@ async function getEntry(claims, config) {
   const fn = realm.win[type];
   if (typeof fn !== "function") throw new Error("bundle export not found: " + type);
   if (realms.size >= MAX_REALMS) forgetOldestRealm();
-  const entry = { realm, fn };
+  const entry = { realm, fn, warmed: false };
   realms.set(key, entry);
+  if (type === "hsw") {
+    // hsw initialises its CTR/wasm tables on the first call; the page does the
+    // same before asking for an n-token. Best-effort: a build that does not
+    // need it must not fail here.
+    try {
+      await fn(1, new Uint8Array(0));
+      entry.warmed = true;
+    } catch (_) {
+      // warmup is best-effort
+    }
+  }
   return entry;
 }
 
