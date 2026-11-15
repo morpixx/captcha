@@ -1,6 +1,6 @@
 # hCaptcha sites: live capture, HTTP pass rate, verdicts
 
-Снимок 2026-11-15, 02:20 Europe/Berlin. Инструмент — `tools/hcaptcha_probe.py`, он же источник всех чисел ниже.
+Снимок 2026-11-15 03:10 Europe/Berlin, ветка `feat/research-sites` поверх мержа `feat/prod-base` (`9cc1d8f`: фикс realm и пассивная ветка уже в базе). Инструмент — `tools/hcaptcha_probe.py`, он же источник всех чисел ниже.
 
 Задача файла — ответить на один вопрос по каждому хосту: **можно ли получить токен по HTTP**
 (checksiteconfig -> n-token -> getcaptcha), или нужен браузер. Не «какой солвер лучше», а
@@ -12,8 +12,10 @@
 
 1. `POST /checksiteconfig?v=<build>&host=&sitekey=&sc=1&swa=1&spst=1` — новый HTTP-клиент
    (`curl_cffi`, impersonate `chrome131`), session-per-run;
-2. n-token = hsw/hsj bundle (`adapters/hcaptcha_js/server.js`, jsdom + canvas) на challenge JWT;
-3. `POST /getcaptcha/<sitekey>` — форма или msgpack+Ext(18), если сайт просит `enc_get_req`.
+2. n-token = hsw/hsj bundle на challenge JWT — через продакшен-раннер
+   `adapters.hcaptcha_js.JsBundleRunner` (jsdom + canvas), без локальных обходов;
+3. `POST /getcaptcha/<sitekey>` — форма, msgpack+Ext(18) при `enc_get_req`, или пассивная форма
+   без n-token, если `checksiteconfig` ответил `{"pass": true}`.
 
 Итог прогона: `pass` (P1_ / pass UUID), `challenge` (сервер вернул новый `c` вместо токена),
 `reject` (pass=false и без challenge), `error` (транспорт/протокол/бандл).
@@ -21,7 +23,7 @@
 Команда:
 
 ~~~powershell
-D:/captcha/.venv/Scripts/python.exe tools/hcaptcha_probe.py probe --runs 10 --interval 1.0 --node-path D:/riot-research/node_modules --out C:/Users/Public/hcaptcha-probe-run.json
+D:/captcha/.venv/Scripts/python.exe tools/hcaptcha_probe.py probe --runs 10 --interval 1.0 --node-path D:/riot-research/node_modules --out C:/Users/Public/hcaptcha-probe-run2.json
 ~~~
 
 50 прогонов (5 сайтов x 10), последовательно, один egress IP, без прокси. `client_version` —
@@ -33,11 +35,11 @@ canvas 3.2.3 (взяты из `D:/riot-research/node_modules`, read-only; `npm c
 
 | host | sitekey | где живёт | HTTP прогонов | pass | challenge | pass rate | p50 / p95, ms | вердикт |
 |---|---|---|---|---|---|---|---|---|
-| `store.steampowered.com` | `e18a349a-46c2-46a0-87a8-74be79345c92` | `/join/`, XHR `/join/refreshcaptcha/` | 10 | 0 | 10 | 0% | 798 / 3839 | browser |
-| `steamcommunity.com` | `e18a349a-46c2-46a0-87a8-74be79345c92` | тот же ключ, виджета на `/login/home/` нет | 10 | 0 | 10 | 0% | 910 / 1981 | browser |
-| `account.riotgames.com` | `b3c619fc-4b72-4838-9bf2-398888588d62` | Riot OAuth/account (D:/riot-research) | 10 | 0 | 10 | 0% | 761 / 1154 | browser |
-| `authenticate.riotgames.com` | `a5f74b19-9e45-40e0-b45d-47ff91b7a6c2` | Riot authenticate, feature `andint` | 10 | 0 | 10 | 0% | 994 / 2177 | browser |
-| `example.com` (контроль) | `10000000-ffff-ffff-ffff-000000000001` | тестовый ключ hCaptcha (passive) | 10 | 10 | 0 | 100% | 870 / 2306 | http |
+| `store.steampowered.com` | `e18a349a-46c2-46a0-87a8-74be79345c92` | `/join/`, XHR `/join/refreshcaptcha/` | 10 | 0 | 10 | 0% | 428 / 8467 | browser |
+| `steamcommunity.com` | `e18a349a-46c2-46a0-87a8-74be79345c92` | тот же ключ, виджета на `/login/home/` нет | 10 | 0 | 10 | 0% | 701 / 2623 | browser |
+| `account.riotgames.com` | `b3c619fc-4b72-4838-9bf2-398888588d62` | Riot OAuth/account (D:/riot-research) | 10 | 0 | 10 | 0% | 531 / 4714 | browser |
+| `authenticate.riotgames.com` | `a5f74b19-9e45-40e0-b45d-47ff91b7a6c2` | Riot authenticate, feature `andint` | 10 | 0 | 10 | 0% | 340 / 2312 | browser |
+| `example.com` (контроль) | `10000000-ffff-ffff-ffff-000000000001` | тестовый ключ hCaptcha (passive) | 10 | 10 | 0 | 100% | 582 / 1223 | http |
 | `www.epicgames.com` | — | hCaptcha не найдена, виджет — Talon | — | — | — | — | — | вне матрицы |
 
 Вердикты: **http** — HTTP-лейн выдаёт токен; **browser** — HTTP доходит до challenge и токена не
@@ -48,14 +50,15 @@ canvas 3.2.3 (взяты из `D:/riot-research/node_modules`, read-only; `npm c
 
 | site | checksiteconfig | n-token | getcaptcha | длина n-token |
 |---|---|---|---|---|
-| steam-join | 402 | 103 | 224 | 15 068 … 39 012 (медиана 38 736) |
-| steam-community | 506 | 91 | 255 | 38 400 … 39 428 |
-| riot-account | 505 | 16 | 190 | 13 676 … 13 740 |
-| riot-authenticate | 749 | 15 | 198 | 13 680 … 13 684 |
-| hcaptcha-test-key | 613 | — (не нужен) | 151 | — |
+| steam-join | 132 | 111 | 160 | 39 004 … 40 064 (медиана 39 724) |
+| steam-community | 224 | 109 | 153 | 39 068 … 40 092 |
+| riot-account | 347 | 9 | 111 | 14 092 … 14 156 |
+| riot-authenticate | 108 | 10 | 97 | 14 100 (без разброса) |
+| hcaptcha-test-key | 536 | — (не нужен) | 51 | — |
 
-Первый прогон каждого сайта дороже остальных на 1-3 с: поднимается jsdom-realm и тянется bundle;
-дальше realm переиспользуется (как в worker'е).
+`p95` шумный: одиночные выбросы (Steam #1 — 8.5 с на прогрев realm, Riot #1 — 4.7 с),
+поэтому ориентир — `p50` и среднее (`total_ms_mean` 0.7-1.7 с). После прогрева типичный прогон
+0.3-1.2 с.
 
 ## Что значит 0/10
 
@@ -66,8 +69,9 @@ canvas 3.2.3 (взяты из `D:/riot-research/node_modules`, read-only; `npm c
 VM, из-за которой jsdom-отпечаток заведомо не проходит (см. `D:/riot-research/hcaptcha-re-report.md`).
 
 Проверка, что инструмент в принципе умеет pass: контрольный ключ hCaptcha отвечает
-`checksiteconfig` как `{"pass": true}` (без `c`) и отдаёт pass UUID на пустом n-token — 10/10.
-Значит 0% на Steam/Riot — свойство сайта, а не сломанный транспорт или бандл.
+`checksiteconfig` как `{"pass": true}` (без `c`) и отдаёт pass UUID на пустом n-token — 10/10,
+сам `getcaptcha` ~50 мс. Значит 0% на Steam/Riot — свойство сайта, а не сломанный транспорт или
+бандл.
 
 ## Epic: hCaptcha на публичном входе нет
 
@@ -103,22 +107,23 @@ r = client.post("https://store.steampowered.com/join/refreshcaptcha/",
 `steamcommunity.com`: `checksiteconfig` вернул challenge, то есть привязка host на этом шаге не
 проверяется — но `getcaptcha` всё равно требует challenge, поэтому строка помечена browser.
 
-## Найдено по дороге (не правил — файлы не мои)
+## Что дал мерж feat/prod-base
 
-1. **`adapters/hcaptcha_js` ломает stdio-протокол.** `realm.js` создаёт jsdom без
-   `virtualConsole`, поэтому `console.log` из бандла уходит в stdout воркера. Steam-бандл пишет
-   строку `undefined` после solve, и следующий `_call` читает её как ответ:
-   `JSRuntimeError: bundle worker returned non-JSON`. В прогоне — 20 посторонних строк на 20
-   Steam-solve (Riot-бандл в этом прогоне не логировал). Для Steam это значит, что падает не
-   второй task, а первый же: после solve в том же task'е идёт `encrypt` (`enc_get_req`), и он
-   получает ту же строку. Проба обходит это, отбрасывая не-JSON строки и считая их
-   (`summary.stray_lines`).
-2. **Passive-ключи солвер считает нерешаемыми.** `{"pass": true}` без `c` — легальный ответ
-   hCaptcha (тестовый ключ, пассивные деплойменты). `wire.checksite_config` бросает
-   `UnsolvableError`, хотя такой сайт решается вообще без JS: `POST /getcaptcha/<sitekey>` формой
-   с пустым `n` отдаёт pass UUID за ~150 мс. Это дешёвый +1 к покрытию HTTP-лейна.
-3. `andint` в features на `authenticate.riotgames.com` подтверждает заметку из D:/riot-research:
-   протокол байт-корректный, отпечаток не тот.
+Прошлый снимок (02:20, до мержа) снимался на локальном клиенте воркера: продакшен-раннер падал.
+jsdom без `VirtualConsole` выпускал `console.log` бандла в stdout, и следующий `_call` читал
+`undefined` как ответ (`JSRuntimeError: bundle worker returned non-JSON`). Для Steam это ломало
+первый же task — после solve в нём идёт `encrypt` (`enc_get_req`).
+
+После мержа:
+
+- в `realm.js` появился `VirtualConsole`, вывод бандла больше не попадает в протокол;
+- в `wire.py`/`http.py` появилась пассивная ветка (`CheckConfig`, `get_captcha_passive`,
+  `pass_token` принимает bare UUID);
+- проба переведена на продакшен-раннер и `wire` без обходов: 50 прогонов, **0 ошибок протокола**,
+  ни одной посторонней строки (до мержа — 20 на 20 Steam-solve);
+- `p50` поэтому ниже прежнего (428/701/531/340 против 798/910/761/994): ушёл оверхед локального
+  клиента и холодного старта на каждый прогон. Поведение сайтов не изменилось — те же 0/10
+  `challenge`.
 
 ## Воспроизвести
 
@@ -127,7 +132,7 @@ r = client.post("https://store.steampowered.com/join/refreshcaptcha/",
 cd src/captcha/adapters/hcaptcha_js; npm ci; cd ../../../..
 
 # 10 прогонов по каждому известному сайту (50 всего), одной строкой
-D:/captcha/.venv/Scripts/python.exe tools/hcaptcha_probe.py probe --runs 10 --interval 1.0 --node-path D:/riot-research/node_modules --out C:/Users/Public/hcaptcha-probe-run.json
+D:/captcha/.venv/Scripts/python.exe tools/hcaptcha_probe.py probe --runs 10 --interval 1.0 --node-path D:/riot-research/node_modules --out C:/Users/Public/hcaptcha-probe-run2.json
 
 # один сайт / свой ключ
 D:/captcha/.venv/Scripts/python.exe tools/hcaptcha_probe.py probe --runs 5 --site account.riotgames.com=b3c619fc-4b72-4838-9bf2-398888588d62
@@ -151,3 +156,4 @@ D:/captcha/.venv/Scripts/python.exe tools/hcaptcha_probe.py discover --url https
 - `steam-community` — не отдельный деплой, а проверка того же ключа на другом host.
 - Числа сняты без `vm_data` (бандл видит `null`); с коллектором отпечатка они могут измениться —
   это следующий эксперимент, не этот.
+- `p95` на 10 прогонах нестабилен (сетевые выбросы); для решений смотреть `p50`/`mean`.
