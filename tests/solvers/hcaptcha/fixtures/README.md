@@ -9,6 +9,8 @@ branches, not to prove a pass rate.
 - `checksiteconfig_hsw.json` - encrypted mode: `features.enc_get_req` is set.
 - `checksiteconfig_plain.json` - legacy form mode.
 - `getcaptcha_pass.json` - JSON pass answer with `generated_pass_UUID` (P1_).
-- `getcaptcha_challenge.json` - image challenge answer; HTTP cannot finish it.
-- `getcaptcha_error.json` - n-token rejected, `error-codes` populated.
+- `getcaptcha_challenge.json` - image challenge answer; HTTP cannot finish it, so
+  the solver escalates (NeedsBrowserError).
+- `getcaptcha_error.json` - n-token rejected, `error-codes` populated; escalates
+  to the browser lane instead of retrying the same fingerprint.
 - `getcaptcha_pass.enc` - opaque sealed body, decoded through the (mocked) bundle.

@@ -11,6 +11,7 @@ import pytest
 from captcha.adapters.hcaptcha_js import runner as js_runner
 from captcha.adapters.hcaptcha_js.runner import JsBundleRunner
 from captcha.domain import CaptchaType, SolveMode, Task
+from captcha.domain import errors as domain_errors
 from captcha.domain.errors import ConfigError, JSRuntimeError, SensorError, UnsolvableError
 from captcha.domain.task import new_task_id
 from captcha.solvers import SolverContext
@@ -181,9 +182,9 @@ async def test_bundle_gets_challenge_jwt_and_page():
     assert http.calls[0]["headers"]["User-Agent"] == "Mozilla/5.0 (X11; Linux x86_64) Test/1.0"
 
 
-async def test_empty_n_token_is_sensor_error():
+async def test_empty_n_token_is_js_runtime_error():
     http = FakeHTTP(FakeResponse(fixture("checksiteconfig_plain.json")))
-    with pytest.raises(SensorError):
+    with pytest.raises(JSRuntimeError):
         await solve(http, FakeBundle(n_token=""))
 
 
@@ -284,6 +285,7 @@ async def test_image_challenge_raises_needs_browser():
     with pytest.raises(NeedsBrowserError) as exc:
         await solve(http, FakeBundle())
 
+    assert isinstance(exc.value, domain_errors.NeedsBrowserError)
     assert exc.value.code == "ERR_NEEDS_BROWSER"
     assert exc.value.context["challenge"] == "image_label_binary"
     assert exc.value.context["sitekey"] == SITEKEY
@@ -301,22 +303,33 @@ async def test_encrypted_challenge_also_escalates():
         await solve(http, bundle)
 
 
-async def test_error_codes_raise_sensor_error():
+async def test_rejected_n_token_escalates_to_browser():
     http = FakeHTTP(FakeResponse(fixture("checksiteconfig_plain.json")), FakeResponse(fixture("getcaptcha_error.json")))
+
+    with pytest.raises(NeedsBrowserError) as exc:
+        await solve(http, FakeBundle())
+
+    assert type(exc.value) is domain_errors.NeedsBrowserError
+    assert exc.value.context["error_codes"] == ["invalid-n"]
+    assert exc.value.context["success"] is False
+    assert exc.value.context["sitekey"] == SITEKEY
+
+
+async def test_non_p1_token_without_pass_escalates_to_browser():
+    body = {"generated_pass_UUID": "not-a-pass", "pass": False}
+    http = FakeHTTP(FakeResponse(fixture("checksiteconfig_plain.json")), FakeResponse(body))
+
+    with pytest.raises(NeedsBrowserError):
+        await solve(http, FakeBundle())
+
+
+async def test_getcaptcha_http_error_stays_sensor_error():
+    http = FakeHTTP(FakeResponse(fixture("checksiteconfig_plain.json")), FakeResponse(b"", status=502, content_type=""))
 
     with pytest.raises(SensorError) as exc:
         await solve(http, FakeBundle())
 
-    assert exc.value.context["error_codes"] == ["invalid-n"]
-    assert exc.value.context["success"] is False
-
-
-async def test_non_p1_token_without_pass_is_sensor_error():
-    body = {"generated_pass_UUID": "not-a-pass", "pass": False}
-    http = FakeHTTP(FakeResponse(fixture("checksiteconfig_plain.json")), FakeResponse(body))
-
-    with pytest.raises(SensorError):
-        await solve(http, FakeBundle())
+    assert "502" in exc.value.message
 
 
 # --- payload / config guards -------------------------------------------------

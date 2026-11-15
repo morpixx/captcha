@@ -4,11 +4,13 @@ The wire shapes live in wire.py (ported from the reference client); this module
 is the policy on top of them:
 
   * a P1_ pass token is the answer;
-  * a getcaptcha answer carrying an image challenge is not solvable over HTTP -
-    it leaves as NeedsBrowserError so the worker can escalate the envelope
-    instead of retrying a fingerprint the site already refused;
-  * anything else (error-codes, empty n-token) is a sensor/protocol problem and
-    surfaces as SensorError.
+  * a getcaptcha answer carrying an image challenge is not solvable over HTTP,
+    and neither is an answer that rejects the n-token outright - both leave as
+    NeedsBrowserError, so the worker moves the envelope to the browser lane
+    instead of retrying a fingerprint the site already refused (contract §2:
+    one hop, then terminal);
+  * protocol breakage (HTTP status, undecodable body, no challenge JWT) stays a
+    SensorError and goes through the normal retry policy.
 
 The JS bundle (hsw/hsj) comes from ctx.extra["hcaptcha_js"]: the worker owns the
 Node process, the solver never spawns one.
@@ -21,20 +23,10 @@ import time
 from typing import Any, ClassVar
 
 from captcha.domain import CaptchaType, SolverResult, Task
-from captcha.domain.errors import CaptchaError, ConfigError, SensorError
+from captcha.domain.errors import ConfigError, JSRuntimeError, NeedsBrowserError, SensorError
 from captcha.solvers import Solver, SolverContext, SolverInfo
 
 from . import wire
-
-try:  # router-escalation owns the real class in captcha.domain.errors
-    from captcha.domain.errors import NeedsBrowserError
-except ImportError:  # pragma: no cover - drop the shim once that class lands
-
-    class NeedsBrowserError(CaptchaError):  # type: ignore[no-redef]
-        """Stand-in carrying the code the router escalates on."""
-
-        code = "ERR_NEEDS_BROWSER"
-
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +64,7 @@ class HCaptchaHTTPSolver(Solver):
             vm_data=params.vm_data,
         )
         if not isinstance(n_token, str) or not n_token:
-            raise SensorError("hcaptcha: bundle produced an empty n-token", context={"host": params.host})
+            raise JSRuntimeError("hcaptcha: bundle produced an empty n-token", context={"host": params.host})
 
         data = await wire.get_captcha(ctx.http, params, challenge, features, n_token, req, runner)
         latency_ms = (time.monotonic() - started) * 1000.0
@@ -95,7 +87,7 @@ class HCaptchaHTTPSolver(Solver):
                     "challenge": wire.challenge_kind(data),
                 },
             )
-        raise SensorError(
+        raise NeedsBrowserError(
             "hcaptcha: getcaptcha rejected the n-token",
             context={
                 "sitekey": params.sitekey,
