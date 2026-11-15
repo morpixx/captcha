@@ -180,7 +180,7 @@ async def test_official_type_and_flat_proxy_reach_the_worker(wired) -> None:
     assert task.payload["invisible"] is True
     for gone in ("proxyType", "proxyAddress", "proxyPort", "proxyLogin", "proxyPassword", "type"):
         assert gone not in task.payload
-    assert state.producer.published == [(task_id, "cv")]
+    assert state.producer.published == [(task_id, "browser")]
     assert CREATED[0].type == "hcaptcha"
 
 
