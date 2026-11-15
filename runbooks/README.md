@@ -98,9 +98,9 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
 
 | тип | лейн | runbook |
 |---|---|---|
-| `funcaptcha` | cv | [funcaptcha.md](funcaptcha.md) |
+| `funcaptcha` | http | [funcaptcha.md](funcaptcha.md) |
 | `funcaptcha_bda` | http | [funcaptcha.md](funcaptcha.md) |
-| `funcaptcha_enterprise` | cv | [funcaptcha.md](funcaptcha.md) |
+| `funcaptcha_enterprise` | http | [funcaptcha.md](funcaptcha.md) |
 
 ### Turnstile / Cloudflare
 
@@ -133,22 +133,22 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
 |---|---|---|
 | `shein` | cv | pending |
 | `mtcaptcha` | cv | pending |
-| `tencent` | cv | [tencent.md](tencent.md) |
-| `yidun` | cv | [yidun.md](yidun.md) |
-| `alibaba` | cv | pending |
+| `tencent` | browser | [tencent.md](tencent.md) |
+| `yidun` | browser | [yidun.md](yidun.md) |
+| `alibaba` | http | pending |
 | `prosopo` | browser | pending |
 | `captchafox` | browser | pending |
 | `vk` | http | pending |
 | `yandex` | browser | pending |
 | `temu` | http | pending |
 | `binance` | cv | pending |
-| `hunt` | cv | pending |
+| `hunt` | http | pending |
 | `basilisk` | cv | pending |
 | `cutcaptcha` | cv | [cutcaptcha.md](cutcaptcha.md) |
 | `capy` | cv | [capy.md](capy.md) |
 | `keycaptcha` | cv | [keycaptcha.md](keycaptcha.md) |
 | `lemin` | cv | [lemin.md](lemin.md) |
-| `atbcaptcha` | cv | [atbcaptcha.md](atbcaptcha.md) |
+| `atbcaptcha` | browser | [atbcaptcha.md](atbcaptcha.md) |
 
 ## Что осталось (26 pending)
 
@@ -182,6 +182,7 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
   `rotate` падает уже на задаче с `ERR_CONFIG` (классический путь требует OpenCV).
   `baseline.md` — снимок и не переписывается; `AGENTS.md` и `docs/architecture.md`
   приведены к факту, детали — здесь и в [rotate.md](rotate.md) / [slider.md](slider.md).
-- У HTTP-солверов лейна `cv` (tencent, yidun, atbcaptcha, cutcaptcha, recaptcha_v2) есть
-  риск интеграции: `services/worker_cv/worker.py` собирает `SolverContext` без `http` и не
-  обрабатывает `ERR_NEEDS_BROWSER`. Подробности — в §7 соответствующих runbook-ов.
+- У HTTP-солверов, которые делегируют в `cv`/`browser` (tencent, yidun, atbcaptcha,
+  cutcaptcha, recaptcha_v2), есть риск интеграции: `services/worker_cv/worker.py` собирает
+  `SolverContext` без `http` и не обрабатывает `ERR_NEEDS_BROWSER`. Подробности — в §7
+  соответствующих runbook-ов.
