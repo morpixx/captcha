@@ -1,26 +1,37 @@
-"""Classical angle estimation.
+"""Classical angle estimation, no model.
 
 Combines two signals and picks the more confident:
 
-  (a) Hough-line orientation. Finds the dominant line direction; rotation
-      needed is that direction modulo 90°. Great when the image has obvious
-      structure (buildings, horizons, text).
-  (b) PCA on edge pixels. SVD on edge-pixel coordinates; the first principal
-      axis is the dominant direction. Works when lines are too short/curved
-      for Hough but structure still exists.
+  (a) Hough-line orientation - dominant line direction, folded to 0..90.
+  (b) PCA on edge pixels - first principal axis, for short/curved structure.
 
-Returns 0..360 by using the image's radial-darkness asymmetry as the
-180° disambiguator: natural photos have brighter sky up top, darker
-foreground at the bottom. Only used when the caller treats the task as
-full-rotation (0..360). For 90°-step captchas, the 0..90 result is enough.
+The 180 degree disambiguator uses the image's radial brightness asymmetry
+(sky brighter than ground) only when full_rotation is requested.
+
+OpenCV is required by this path but imported lazily, so the rotate package
+still imports in a worker without the cv extra; calling it then raises
+ERR_CONFIG instead of ImportError.
 """
 
 from __future__ import annotations
 
 import math
+from typing import Any
 
-import cv2
 import numpy as np
+
+from captcha.domain.errors import ConfigError, UnsolvableError
+
+
+def _import_cv2() -> Any:
+    try:
+        import cv2  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ConfigError(
+            "opencv required for the classical rotate path",
+            context={"install": "pip install captcha[cv]"},
+        ) from exc
+    return cv2
 
 
 def estimate_angle(
@@ -34,83 +45,85 @@ def estimate_angle(
 
     Angle is how much to ROTATE the image counter-clockwise to restore upright.
     """
-    h, w = rgb.shape[:2]
-    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    edges = cv2.Canny(blur, canny_lo, canny_hi)
+    image = np.asarray(rgb)
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise UnsolvableError("rotate input must be RGB HxWx3", context={"shape": tuple(image.shape)})
+    height, width = image.shape[:2]
+    if height < 8 or width < 8:
+        raise UnsolvableError("rotate input is too small", context={"shape": (width, height)})
 
-    hough_angle, hough_conf = _hough_angle(edges)
+    cv2 = _import_cv2()
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(blurred, int(canny_lo), int(canny_hi))
+
+    hough_angle, hough_conf = _hough_angle(edges, cv2)
     pca_angle, pca_conf = _pca_angle(edges)
 
     if hough_conf >= pca_conf and hough_conf > 0.05:
-        angle90 = hough_angle
-        conf = hough_conf
+        angle90, confidence = hough_angle, hough_conf
     else:
-        angle90 = pca_angle
-        conf = pca_conf
+        angle90, confidence = pca_angle, pca_conf
+    if not math.isfinite(angle90):
+        raise UnsolvableError("angle estimator produced a non-finite angle", context={})
 
     if not full_rotation:
-        return (angle90 % 360.0, conf)
+        return (angle90 % 360.0, float(confidence))
 
-    # Disambiguate 180° using sky/ground brightness asymmetry after derotation.
-    # Rotate by candidate and pick the one whose top half is brighter.
     candidates = [angle90 % 360.0, (angle90 + 180.0) % 360.0]
     best = candidates[0]
     best_score = -math.inf
-    cx, cy = w / 2.0, h / 2.0
-    for cand in candidates:
-        M = cv2.getRotationMatrix2D((cx, cy), cand, 1.0)
-        rot = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-        top = float(rot[: h // 2].mean())
-        bot = float(rot[h // 2 :].mean())
-        score = top - bot
+    center = (width / 2.0, height / 2.0)
+    for candidate in candidates:
+        matrix = cv2.getRotationMatrix2D(center, candidate, 1.0)
+        rotated = cv2.warpAffine(gray, matrix, (width, height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        score = float(rotated[: height // 2].mean()) - float(rotated[height // 2 :].mean())
         if score > best_score:
             best_score = score
-            best = cand
-    return (best, conf)
+            best = candidate
+    return (float(best), float(confidence))
 
 
-def _hough_angle(edges: np.ndarray) -> tuple[float, float]:
+def _hough_angle(edges: np.ndarray, cv2: Any) -> tuple[float, float]:
     lines = cv2.HoughLinesP(edges, 1, math.pi / 180, 60, minLineLength=20, maxLineGap=6)
     if lines is None or len(lines) == 0:
         return (0.0, 0.0)
-    angles = []
-    weights = []
+    angles: list[float] = []
+    weights: list[float] = []
     for x1, y1, x2, y2 in lines[:, 0]:
-        dx = x2 - x1
-        dy = y2 - y1
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
         length = math.hypot(dx, dy)
         if length < 8:
             continue
-        a = math.degrees(math.atan2(dy, dx)) % 180.0
-        # Fold to deviation from nearest axis (0 or 90).
-        dev = min(a, 180.0 - a, abs(a - 90.0))
-        angles.append(dev if a < 90 else -dev)  # signed deviation, left vs right of vertical
+        angle = math.degrees(math.atan2(dy, dx)) % 180.0
+        deviation = min(angle, 180.0 - angle, abs(angle - 90.0))
+        angles.append(deviation if angle < 90 else -deviation)
         weights.append(length)
     if not angles:
         return (0.0, 0.0)
-    arr = np.asarray(angles, dtype=np.float64)
-    w = np.asarray(weights, dtype=np.float64)
-    med = float(np.average(arr, weights=w))
-    # Confidence: normalised line mass, clipped.
-    conf = float(min(1.0, w.sum() / (edges.shape[0] * edges.shape[1] * 0.05)))
-    return (med, conf)
+    values = np.asarray(angles, dtype=np.float64)
+    weight_arr = np.asarray(weights, dtype=np.float64)
+    median = float(np.average(values, weights=weight_arr))
+    confidence = float(min(1.0, weight_arr.sum() / (edges.shape[0] * edges.shape[1] * 0.05)))
+    return (median, confidence)
 
 
 def _pca_angle(edges: np.ndarray) -> tuple[float, float]:
     ys, xs = np.where(edges > 0)
     if xs.size < 50:
         return (0.0, 0.0)
-    pts = np.stack([xs - xs.mean(), ys - ys.mean()], axis=1).astype(np.float64)
-    cov = (pts.T @ pts) / pts.shape[0]
-    eigvals, eigvecs = np.linalg.eigh(cov)
-    # Largest eigenvalue's eigenvector = dominant direction.
-    idx = int(np.argmax(eigvals))
-    vx, vy = float(eigvecs[0, idx]), float(eigvecs[1, idx])
-    a = math.degrees(math.atan2(vy, vx)) % 180.0
-    # Fold to nearest axis; sign tells which side of vertical.
-    dev = min(a, 180.0 - a, abs(a - 90.0))
-    signed = dev if a < 90 else -dev
-    ratio = float(eigvals[idx] / (eigvals.sum() + 1e-9))
-    conf = max(0.0, (ratio - 0.5) * 2.0)  # 0.5=isotropic, 1.0=perfectly linear
-    return (signed, conf)
+    points = np.stack([xs - xs.mean(), ys - ys.mean()], axis=1).astype(np.float64)
+    covariance = (points.T @ points) / points.shape[0]
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    index = int(np.argmax(eigenvalues))
+    vx, vy = float(eigenvectors[0, index]), float(eigenvectors[1, index])
+    angle = math.degrees(math.atan2(vy, vx)) % 180.0
+    deviation = min(angle, 180.0 - angle, abs(angle - 90.0))
+    signed = deviation if angle < 90 else -deviation
+    ratio = float(eigenvalues[index] / (eigenvalues.sum() + 1e-9))
+    confidence = max(0.0, (ratio - 0.5) * 2.0)
+    return (signed, confidence)
+
+
+__all__ = ["estimate_angle"]
