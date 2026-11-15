@@ -53,6 +53,9 @@ SOLVERS: tuple[str, ...] = (
     "captcha.solvers.funcaptcha.bda:FunCaptchaBDASolver",
     "captcha.solvers.funcaptcha.funcaptcha:FunCaptchaEnterpriseSolver",
     "captcha.solvers.funcaptcha.funcaptcha:FunCaptchaSolver",
+    # hcaptcha token: browser first, HTTP research path (Riot profile stays browser)
+    "captcha.solvers.hcaptcha.browser:HCaptchaBrowserSolver",
+    "captcha.solvers.hcaptcha.http:HCaptchaHTTPSolver",
     # interactive
     "captcha.solvers.interactive.alibaba.solver:AlibabaSolver",
     "captcha.solvers.interactive.atbcaptcha.solver:AtbCaptchaSolver",

@@ -90,8 +90,8 @@ _ROWS: tuple[TypeSpec, ...] = (
     # cv by definition: the delegated slider/click/rotate solver must be
     # importable in the same process, and that only holds where --extra cv is.
     # --- hCaptcha
-    _row(CaptchaType.HCAPTCHA, "cv", "0.00150", SolutionKind.HCAPTCHA),
-    _row(CaptchaType.HCAPTCHA_ENTERPRISE, "cv", "0.00300", SolutionKind.HCAPTCHA),
+    _row(CaptchaType.HCAPTCHA, "browser", "0.00150", SolutionKind.HCAPTCHA),
+    _row(CaptchaType.HCAPTCHA_ENTERPRISE, "browser", "0.00300", SolutionKind.HCAPTCHA),
     # reCAPTCHA
     _row(CaptchaType.RECAPTCHA_V2, "cv", "0.00200", SolutionKind.RECAPTCHA),
     _row(CaptchaType.RECAPTCHA_V2_ENTERPRISE, "cv", "0.00300", SolutionKind.RECAPTCHA),

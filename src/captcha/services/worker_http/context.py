@@ -9,6 +9,7 @@ client scoped to its call.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,12 @@ class WorkerContextBundle:
     proxy_pool: ProxyPool | None
 
     async def aclose(self) -> None:
+        runner = (self.template.extra or {}).get("hcaptcha_js")
+        if runner is not None:
+            try:
+                await runner.aclose()
+            except Exception:
+                structlog.get_logger(__name__).warning("hcaptcha_js.close_failed", exc_info=True)
         if self.js_runtime is not None:
             try:
                 await self.js_runtime.close()
@@ -75,6 +82,21 @@ def _load_proxy_pool(settings: Settings) -> ProxyPool | None:
             "failed to load proxy pool",
             context={"path": str(path), "error": str(exc)},
         ) from exc
+
+
+def _build_hcaptcha_js(log: Any) -> Any:
+    """Persistent Node bundle worker for the hCaptcha HTTP path.
+
+    Absent Node/node_modules is not fatal: the solver reports ERR_CONFIG per
+    task instead of taking the whole HTTP worker down at boot.
+    """
+    try:
+        from captcha.adapters.hcaptcha_js.runner import JsBundleRunner
+
+        return JsBundleRunner(node_binary=os.getenv("HCAPTCHA_JS_NODE", "node"))
+    except Exception as exc:
+        log.warning("hcaptcha_js.unavailable", error=str(exc))
+        return None
 
 
 def _build_js_runtime() -> Runtime | None:
@@ -148,6 +170,7 @@ async def build_context(
     )
     sensors = sensor_registry()
     js_runtime = _build_js_runtime()
+    hcaptcha_js = _build_hcaptcha_js(log)
     http_factory = _make_http_factory(settings)
 
     template = SolverContext(
@@ -163,6 +186,7 @@ async def build_context(
             "redis": redis,
             "pg": pg,
             "http_factory": http_factory,
+            "hcaptcha_js": hcaptcha_js,
         },
     )
 

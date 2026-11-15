@@ -4,7 +4,12 @@ python -m captcha.services.pipeline.cli                 # daemon, all jobs
 python -m captcha.services.pipeline.cli --once sample   # one sample run, exit
 python -m captcha.services.pipeline.cli --once drift    # one drift scan, exit
 python -m captcha.services.pipeline.cli --once retrain --type turnstile --reason manual
-python -m captcha.services.pipeline.cli --once all      # one of each, in order
+python -m captcha.services.pipeline.cli --once golden --manifest golden/v1/manifest.json --predict hopscotch.solver:predict
+python -m captcha.services.pipeline.cli --once check-model --name hopscotch-v1
+python -m captcha.services.pipeline.cli --once all      # sample + drift, in order
+
+--once golden exits 0 when accuracy/coverage clear the thresholds (default 0.95 /
+0.80 from the production contract), 1 when they do not, 2 on a broken manifest.
 """
 
 from __future__ import annotations
@@ -12,16 +17,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import importlib
+import json
 import os
 import signal
 import sys
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 
 from captcha.adapters.storage import init_engine, shutdown_engine
 from captcha.config import get_settings
+from captcha.domain.errors import ConfigError
 from captcha.observability import setup_logging
 from captcha.services.pipeline.drift import DriftMonitor
+from captcha.services.pipeline.golden import GoldenManifest, run_golden
 from captcha.services.pipeline.retrain import RetrainTrigger
 from captcha.services.pipeline.s3client import S3Writer
 from captcha.services.pipeline.sampler import Sampler
@@ -34,12 +45,20 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser("captcha-pipeline")
     p.add_argument(
         "--once",
-        choices=("sample", "drift", "retrain", "all"),
+        choices=("sample", "drift", "retrain", "golden", "check-model", "all"),
         default=None,
         help="run one job and exit instead of starting the daemon",
     )
     p.add_argument("--type", default="", help="(retrain only) captcha type to request retrain for")
     p.add_argument("--reason", default="manual", help="(retrain only) reason string")
+    p.add_argument("--manifest", default="", help="(golden only) path to a golden manifest JSON")
+    p.add_argument("--predict", default="", help="(golden only) 'module:function' taking a task payload")
+    p.add_argument("--loader", default="", help="(golden only) 'module:function' mapping an image key to bytes")
+    p.add_argument("--min-accuracy", type=float, default=None, help="(golden only) override manifest gate")
+    p.add_argument("--min-coverage", type=float, default=None, help="(golden only) override manifest gate")
+    p.add_argument("--concurrency", type=int, default=4, help="(golden only) cases in flight")
+    p.add_argument("--name", default="", help="(check-model only) artifact name, e.g. hopscotch-v1")
+    p.add_argument("--version", default="latest", help="(check-model only) version, default latest")
     return p.parse_args()
 
 
@@ -75,6 +94,64 @@ async def _run_drift(monitor: DriftMonitor, retrain: RetrainTrigger, *, auto_ret
 async def _run_retrain(retrain: RetrainTrigger, *, type_: str, reason: str) -> int:
     ok = await retrain.trigger(type_, reason=reason)
     return 0 if ok else 1
+
+
+def _load_callable(spec: str) -> Callable[..., Any]:
+    """Resolve 'module:function'. The harness never imports a model itself."""
+    module_name, _, attr = spec.partition(":")
+    if not module_name or not attr:
+        raise ValueError(f"expected 'module:function', got {spec!r}")
+    fn = getattr(importlib.import_module(module_name), attr, None)
+    if not callable(fn):
+        raise ValueError(f"{spec!r} is not a callable attribute")
+    return fn
+
+
+def _run_check_model(settings: Any, *, name: str, version: str) -> int:
+    """Whole-bundle check: every file's sha256, the required set, config/release JSON."""
+    if not name:
+        logger.error("pipeline.check_model.usage", need="--name")
+        return 2
+    from captcha.adapters.weights import Registry
+
+    registry = Registry(
+        s3_endpoint=settings.s3_endpoint,
+        bucket=settings.s3_bucket,
+        access_key=settings.s3_access_key,
+        secret_key=settings.s3_secret_key,
+        region=settings.s3_region,
+    )
+    try:
+        check = registry.check_artifact(name, version)
+    except Exception as exc:
+        logger.error("pipeline.check_model.failed", name=name, error=str(exc))
+        return 1
+    print(json.dumps(check.to_dict(), indent=2, ensure_ascii=False))
+    return 0 if check.ok else 1
+
+
+async def _run_golden(args: argparse.Namespace) -> int:
+    if not args.manifest or not args.predict:
+        logger.error("pipeline.golden.usage", need="--manifest and --predict")
+        return 2
+    try:
+        predict = _load_callable(args.predict)
+        loader = _load_callable(args.loader) if args.loader else None
+        manifest = GoldenManifest.from_file(args.manifest)
+    except (ValueError, ImportError, ConfigError) as exc:
+        logger.error("pipeline.golden.setup_failed", error=str(exc))
+        return 2
+
+    report = await run_golden(
+        manifest,
+        predict,
+        loader=loader,
+        concurrency=args.concurrency,
+        min_accuracy=args.min_accuracy,
+        min_coverage=args.min_coverage,
+    )
+    print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    return 0 if report.passed else 1
 
 
 async def _daemon(
@@ -150,6 +227,10 @@ async def _main_async(args: argparse.Namespace) -> int:
                 logger.error("pipeline.retrain.missing_type")
                 return 2
             return await _run_retrain(retrain, type_=args.type, reason=args.reason)
+        if args.once == "golden":
+            return await _run_golden(args)
+        if args.once == "check-model":
+            return _run_check_model(settings, name=args.name, version=args.version)
         if args.once == "all":
             s = await _run_sample(sampler)
             d = await _run_drift(monitor, retrain, auto_retrain=auto_retrain)

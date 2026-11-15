@@ -10,14 +10,19 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+import redis.asyncio as aioredis
 import structlog
 
-from captcha.config import get_settings
+from captcha.config import Settings, get_settings
 from captcha.observability import setup_logging
 from captcha.services.canary.alerts import WebhookAlerter
 from captcha.services.canary.scheduler import CanaryScheduler
 from captcha.services.canary.suite import CanarySuite
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 
 logger = structlog.get_logger(__name__)
 
@@ -30,8 +35,11 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _build_suite(args: argparse.Namespace) -> tuple[CanarySuite, WebhookAlerter]:
-    settings = get_settings()
+def _build_suite(
+    args: argparse.Namespace,
+    settings: Settings,
+    redis: Redis,
+) -> tuple[CanarySuite, WebhookAlerter]:
     gateway_url = (
         args.gateway or os.getenv("CAPTCHA_GATEWAY_URL") or (f"http://{settings.gateway_host}:{settings.gateway_port}")
     )
@@ -45,6 +53,9 @@ def _build_suite(args: argparse.Namespace) -> tuple[CanarySuite, WebhookAlerter]
         fixtures_dir=fixtures_dir,
         poll_interval_sec=poll_interval,
         task_timeout_sec=task_timeout,
+        redis=redis,
+        prefix=settings.redis_stream_prefix,
+        health_threshold=pass_threshold,
     )
     alerter = WebhookAlerter(
         webhook_url=settings.canary_alert_webhook,
@@ -79,7 +90,19 @@ async def _run_once(suite: CanarySuite, alerter: WebhookAlerter) -> int:
     return 0 if report.pass_rate >= alerter.pass_threshold else 1
 
 
-async def _daemon(suite: CanarySuite, alerter: WebhookAlerter, interval_sec: int) -> None:
+async def _once(suite: CanarySuite, alerter: WebhookAlerter, redis: Redis) -> int:
+    try:
+        return await _run_once(suite, alerter)
+    finally:
+        await redis.aclose()
+
+
+async def _daemon(
+    suite: CanarySuite,
+    alerter: WebhookAlerter,
+    interval_sec: int,
+    redis: Redis,
+) -> None:
     async def job() -> None:
         try:
             await _run_once(suite, alerter)
@@ -87,25 +110,26 @@ async def _daemon(suite: CanarySuite, alerter: WebhookAlerter, interval_sec: int
             logger.exception("canary.job.crashed", error=str(exc))
 
     sched = CanaryScheduler(interval_sec=interval_sec, job=job)
-    # one run on boot so a broken deploy fails fast rather than after the first interval
-    await job()
-    sched.start()
-
-    loop = asyncio.get_running_loop()
-
-    def _on_signal() -> None:
-        logger.info("canary.signal.received")
-        sched.request_stop()
-
-    # SIGTERM/SIGINT where available; on Windows only SIGINT is deliverable to asyncio loops
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, _on_signal)
-
     try:
+        # one run on boot so a broken deploy fails fast rather than after the first interval
+        await job()
+        sched.start()
+
+        loop = asyncio.get_running_loop()
+
+        def _on_signal() -> None:
+            logger.info("canary.signal.received")
+            sched.request_stop()
+
+        # SIGTERM/SIGINT where available; on Windows only SIGINT is deliverable to asyncio loops
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, _on_signal)
+
         await sched.wait_shutdown()
     finally:
         sched.shutdown()
+        await redis.aclose()
 
 
 def main() -> int:
@@ -113,12 +137,13 @@ def main() -> int:
     settings = get_settings()
     setup_logging(level=settings.log_level, json=settings.log_json)
 
-    suite, alerter = _build_suite(args)
+    redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    suite, alerter = _build_suite(args, settings, redis)
 
     if args.once:
-        return asyncio.run(_run_once(suite, alerter))
+        return asyncio.run(_once(suite, alerter, redis))
 
-    asyncio.run(_daemon(suite, alerter, settings.canary_interval_sec))
+    asyncio.run(_daemon(suite, alerter, settings.canary_interval_sec, redis))
     return 0
 
 
