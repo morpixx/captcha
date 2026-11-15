@@ -1,12 +1,14 @@
 """FunCAPTCHA image-selection variant (not the rotate/3d variants).
 
 Arkose ships multiple variants. The solvers in this package handle only the
-grid-selection ones ("pick all images with a <prompt>"). Rotation and 3D-dice
-variants go to the geometry solver package.
+grid-selection ones ("pick all images with a <prompt>"). Rotation, 3D dice and
+the token exchange live in captcha.solvers.funcaptcha, which owns the
+funcaptcha / funcaptcha_enterprise types.
 
-Default head: `funcap-v1` — tuned against Arkose's stylized tile set
-(upscaled rendered 3D plus a smaller photo subset), which doesn't transfer
-cleanly from hCaptcha's photorealistic tiles.
+This solver is a grid head, so it is enrolled under classification_grid only;
+a 2x3 payload with head="funcap-v1" reaches it. Arkose's stylized tile set does
+not transfer cleanly from hCaptcha's photorealistic tiles, hence a separate
+head.
 """
 
 from __future__ import annotations
@@ -15,15 +17,13 @@ from captcha.domain import CaptchaType
 from captcha.solvers import SolverInfo
 
 from .base_grid import GridClassifier
+from .grid import HEADS
 
 
 class FunCaptchaGridSolver(GridClassifier):
     info = SolverInfo(
         name="funcaptcha_grid",
-        types=(
-            CaptchaType.FUNCAPTCHA,
-            CaptchaType.FUNCAPTCHA_ENTERPRISE,
-        ),
+        types=(CaptchaType.CLASSIFICATION_GRID,),
         http=True,
 
         needs_js_runtime=False,
@@ -32,6 +32,4 @@ class FunCaptchaGridSolver(GridClassifier):
         version="0.1.0",
     )
 
-    default_head_name = "funcap-v1"
-    default_rows = 2
-    default_cols = 3
+    head = HEADS["funcap-v1"]

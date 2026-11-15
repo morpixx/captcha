@@ -1,8 +1,9 @@
-"""Tile ops: base64 decode, grid slicing, CLIP-style zero-shot fallback.
+"""Tile ops: base64 decode, grid slicing, tensor batching.
 
-Pure PIL + numpy where possible; torch / transformers only imported inside the
-functions that need them, so this module stays importable without the heavy
-extras installed.
+Pure PIL + numpy where possible; torch is imported inside the one function
+that needs it, so the module stays importable without the cv extra. There is
+no zero-shot or heuristic fallback path: a missing head is an error, not a
+CLIP prompt guess.
 """
 
 from __future__ import annotations
@@ -136,56 +137,3 @@ def tiles_to_batch(tiles: list[Image.Image], *, device: str = "cpu") -> Any:
     batch = np.stack(arrs, axis=0)  # NCHW
     batch = (batch - mean) / std
     return torch.from_numpy(batch).to(device)
-
-
-# ---- CLIP zero-shot fallback ----------------------------------------------
-
-
-_CLIP_SINGLETON: dict[str, Any] = {}
-
-
-def select_targets_by_prompt(
-    tiles: list[Image.Image],
-    prompt: str,
-    *,
-    threshold: float = 0.22,
-    device: str = "cpu",
-    model_name: str = "openai/clip-vit-base-patch32",
-) -> list[int]:
-    """Zero-shot tile selection via CLIP cosine against a prompt.
-
-    Dev-only fallback — accuracy on 100x100 tiles is low, don't ship as primary.
-    Returns indices whose per-tile prob exceeds `threshold`; always at least one
-    (the argmax) when nothing crosses the bar, to avoid empty results.
-    """
-    try:
-        import torch
-        from transformers import CLIPModel, CLIPProcessor
-    except ImportError as e:
-        raise ModelInferenceError(
-            "hf extra not installed — CLIP fallback unavailable",
-            context={"hint": "install with: uv pip install captcha-solver-classification[hf]"},
-        ) from e
-
-    key = f"{model_name}:{device}"
-    pair = _CLIP_SINGLETON.get(key)
-    if pair is None:
-        model = CLIPModel.from_pretrained(model_name).to(device).eval()
-        proc = CLIPProcessor.from_pretrained(model_name)
-        pair = (model, proc)
-        _CLIP_SINGLETON[key] = pair
-    model, proc = pair
-
-    # Two prompts — object and a null distractor — so softmax is meaningful
-    texts = [f"a photo of a {prompt}", "a photo of something else"]
-    with torch.no_grad():
-        inputs = proc(text=texts, images=tiles, return_tensors="pt", padding=True)
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        out = model(**inputs)
-        # logits_per_image: [N_tiles, N_texts]
-        probs = out.logits_per_image.softmax(dim=-1)[:, 0].cpu().tolist()
-
-    picked = [i for i, p in enumerate(probs) if p >= threshold]
-    if not picked:
-        picked = [int(max(range(len(probs)), key=probs.__getitem__))]
-    return picked
