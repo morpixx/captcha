@@ -1,0 +1,13 @@
+{
+  "name": "funcaptcha_gt2",
+  "task": {
+    "type": "funcaptcha",
+    "websiteURL": "https://www.example.com/login",
+    "websitePublicKey": "3EE79F8D-13A6-474B-9278-448EA19F79B3"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["token", "userAgent"]
+  },
+  "note": "public key and page URL are the recorded replay constants in tests/solvers/funcaptcha/helpers.py; api_js.js and gt2_session.json pin the wire. No live deployment was captured; replay case only."
+}

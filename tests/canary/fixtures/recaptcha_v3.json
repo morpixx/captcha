@@ -1,0 +1,15 @@
+{
+  "name": "recaptcha_v3_score",
+  "task": {
+    "type": "recaptcha_v3",
+    "websiteURL": "https://example.com/login",
+    "websiteKey": "test-sitekey",
+    "action": "login",
+    "min_score": 0.5
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["gRecaptchaResponse"]
+  },
+  "note": "sitekey, page URL, action and min_score are the recorded replay constants in tests/solvers/score_based/test_recaptcha_v3.py; v3_reload.json pins the rresp shape. The v3 solvers do not attach userAgent, so only the token key is asserted."
+}
