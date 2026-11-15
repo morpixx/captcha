@@ -17,7 +17,7 @@ from captcha.services.gateway.app import sellable_types
 from captcha.solvers.base import Solver, SolverContext, SolverInfo
 from captcha.solvers.registry import SolverRegistry
 
-STABLE = CaptchaType.TURNSTILE
+STABLE = CaptchaType.FRIENDLY
 EXPERIMENTAL = CaptchaType.RECAPTCHA_V3
 
 
