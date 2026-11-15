@@ -20,9 +20,9 @@ import msgspec
 
 from captcha.domain.enums import CaptchaType
 
-Lane = Literal["http", "cv", "protocol"]
+Lane = Literal["http", "cv", "protocol", "browser"]
 
-LANES: tuple[Lane, ...] = ("http", "cv", "protocol")
+LANES: tuple[Lane, ...] = ("http", "cv", "protocol", "browser")
 
 
 class SolutionKind(StrEnum):

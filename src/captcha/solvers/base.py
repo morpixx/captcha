@@ -6,7 +6,8 @@ from typing import Any, ClassVar
 
 import msgspec
 
-from captcha.domain import CaptchaType, SolverResult, Task
+from captcha.domain import CaptchaType, SolveMode, SolverResult, Task
+from captcha.domain.errors import CaptchaError
 
 
 class SolverInfo(msgspec.Struct, frozen=True, kw_only=True):
@@ -15,6 +16,7 @@ class SolverInfo(msgspec.Struct, frozen=True, kw_only=True):
     name: str
     types: tuple[CaptchaType, ...]
     http: bool = True
+    browser: bool = False
     needs_js_runtime: bool = False
     needs_gpu: bool = False
     experimental: bool = False
@@ -35,6 +37,7 @@ class SolverContext:
     fingerprint_store: Any = None  # captcha.adapters.profiles.Store
     models: Any = None  # captcha.adapters.weights.Registry
     sensors: Any = None  # captcha.engines.Registry
+    browser: Any = None  # captcha.adapters.browser.Pool / provider
     config: Any = None  # captcha.domain.Settings
     logger: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
@@ -66,4 +69,18 @@ class Solver(ABC):
 
     @abstractmethod
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
-        """Solve one task. Every solver is HTTP-first; there is no browser path."""
+        """HTTP-first solve. Default path for every type."""
+
+    async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
+        """Browser fallback. Default: not supported by this solver."""
+        raise CaptchaError(
+            "browser mode not supported for this solver",
+            context={"type": getattr(task.type, "value", str(task.type))},
+        )
+
+    def supports(self, mode: SolveMode) -> bool:
+        if mode == SolveMode.HTTP:
+            return self.info.http
+        if mode == SolveMode.BROWSER:
+            return self.info.browser
+        return True

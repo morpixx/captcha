@@ -90,6 +90,7 @@ class TaskStatus(StrEnum):
 
 class SolveMode(StrEnum):
     HTTP = "http"
+    BROWSER = "browser"
     AUTO = "auto"
 
 

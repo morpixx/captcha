@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     worker_http_concurrency: int = Field(default=512, alias="WORKER_HTTP_CONCURRENCY")
     worker_http_impersonate: str = Field(default="chrome124", alias="WORKER_HTTP_IMPERSONATE")
     worker_cv_device: str = Field(default="cpu", alias="WORKER_CV_DEVICE")
+    worker_browser_sessions: int = Field(default=12, alias="WORKER_BROWSER_SESSIONS")
+    worker_browser_headless: bool = Field(default=True, alias="WORKER_BROWSER_HEADLESS")
+    worker_browser_min_free_mb: int = Field(default=2048, alias="WORKER_BROWSER_MIN_FREE_MB")
+
+    # canary
+    canary_interval_sec: int = Field(default=21600, alias="CANARY_INTERVAL_SEC")
+    canary_alert_webhook: str = Field(default="", alias="CANARY_ALERT_WEBHOOK")
+
+    # HTTP-first router
+    http_fallback_threshold: float = Field(default=0.7, alias="HTTP_FALLBACK_THRESHOLD")
+    http_fallback_window_sec: int = Field(default=3600, alias="HTTP_FALLBACK_WINDOW_SEC")
 
     # proxy
     proxy_provider_primary: str = Field(default="", alias="PROXY_PROVIDER_PRIMARY")
