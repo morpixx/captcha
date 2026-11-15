@@ -110,9 +110,9 @@ docs/ runbooks/ infra/   documentation, per-type runbooks, docker
   `protocol` 2, `browser` 8. The browser lane runs Camoufox, not Playwright.
 - Browser-gated types (`browser` lane and `needs_browser`) are sellable only while a browser
   worker beats: an HTTP heartbeat cannot advertise them (`CapabilityRegistry.live_types`).
-- Tests: 2454 passed. `pytest -q` on a bare box: 12 skipped — 10 are
+- Tests: 2457 passed. `pytest -q` on a bare box: 12 skipped — 10 are
   `tests/integration` plus the Camoufox smoke (no Redis/Postgres/browser), 2 are
-  environment-gated (torch, jsdom). CI `checks` excludes `tests/integration`: 2454
+  environment-gated (torch, jsdom). CI `checks` excludes `tests/integration`: 2457
   passed, 2 skipped.
 
 ## Commands
