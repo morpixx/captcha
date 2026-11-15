@@ -191,8 +191,8 @@ origin, `host=account.riotgames.com` не переиспользуется дл�
   `replace(template, http=Client(...))`; клиент несёт proxy/UA/cookies задачи и
   закрывается в `finally`. Поэтому `mtcaptcha`, `binance`, `basilisk`,
   `cutcaptcha` получают `ctx.http`. `tencent`/`yidun`/`atbcaptcha` вообще не в cv,
-  а в browser-лейне; `alibaba`/`hunt` — в http. Ложные §7-записи в старых
-  runbook'ах исправляются отдельным docs-проходом.
+  а в browser-лейне; `alibaba`/`hunt`/`temu` — в http. §7-записи в runbook'ах
+  приведены к этому факту.
 - **Форма ответа `awswaf`/`shein`.** Каталог объявляет `AWSWAF` (`captcha_voucher`/
   `existing_token`) и `COORDS` (`coordinates`), а grid-солверы возвращают `indices`;
   `domain/solution.py` уходит в generic-фолбэк и отдаёт `{"indices": [...]}`. Пока обмен

@@ -4,7 +4,7 @@
 
 - **captcha type:** `CaptchaType.BINANCE` (`binance`) — Binance bCAPTCHA2: слайдер `getCaptcha` → `validateCaptcha`, ответ — токен `captcha#...`.
 - **antibot family:** нет. `bapi/composite/v1/public/antibot/*` с набором фингерпринт-заголовков фронтенда.
-- **lane:** `cv` (по каталогу, нужен слайдер), **mode:** `http`, `needs_js_runtime=True`.
+- **lane:** `cv` (по каталогу, нужен слайдер; `worker_cv` даёт per-task `ctx.http`), **mode:** `http`, `needs_js_runtime=True`.
 - **tier:** 3 — `experimental=True`; ключи шифрования ответа помечены `FILL`.
 - **code:** `solvers/interactive/binance/{solver,wire,endpoints}.py`.
 
@@ -58,7 +58,7 @@ BOX/grid-апгрейд после серии неудач — другой че
 | `ERR_UNSOLVABLE` | `slider resolved to a non-positive offset` | CV не нашёл пазл | другое `seed`/кроп |
 | `ERR_CHALLENGE_EXPIRED` | `validateCaptcha returned no token` | ответ отвергнут | новый раунд |
 | `ERR_CHALLENGE_EXPIRED` | 401/403/409/410/428/429 | подпись/сессия | свежие заголовки |
-| `ERR_CONFIG` | `binance solver needs ctx.http` | воркер без HTTP | см. §7 |
+| `ERR_CONFIG` | `binance solver needs ctx.http` | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_cv` |
 
 ## 6. Canary / фикстуры
 
@@ -74,7 +74,7 @@ BOX/grid-апгрейд после серии неудач — другой че
 
 ## 7. FILL / live-риски
 
-1. **Лейн против контекста.** Каталог держит тип в `cv`, а `worker_cv` собирает контекст без `http` — на нём задача падает в `ERR_CONFIG` до первого запроса.
+1. **Транспорт.** Каталог держит тип в `cv`, и `worker_cv` выдаёт per-task `ctx.http` (`_run_one` → `context.task_context`); клиент несёт proxy/UA задачи и закрывается после `solve_http`. `ERR_CONFIG` из §5 возможен только на контексте, собранном без клиента.
 2. `wire.py` помечает `FILL` на наборе plaintext-полей ответа, точной MAC-схеме `s` и кодах ошибок: шифрование собрано по публичным разборам, не по живому захвату.
 3. Заголовки (`bnc-uuid`, `device-info`, `x-captcha-se`) обязан прислать клиент; без них — 4xx и `ERR_CHALLENGE_EXPIRED`.
 4. BOX/grid-челлендж после неудач не поддержан.

@@ -36,7 +36,8 @@ Endpoints — `solvers/recaptcha/_common.py`: `API2` (`/recaptcha/api2/…`) и 
    challenge token.
 3. `POST <reload>` `reason=a` → audio token + (обычно) URL mp3.
 4. `GET <payload url>` — mp3; расшифровка через `ctx.extra["audio_transcriber"]` или
-   `ctx.extra["solver_registry"]` (Whisper здесь не импортируется).
+   `ctx.extra["solver_registry"]` (второй путь штатный: воркеры кладут registry в `extra` и
+   берут оттуда `AudioCaptchaSolver`; Whisper здесь не импортируется).
 5. `POST <userverify>?k=` (form `v, c=<audio token>, response=<text>, t=0, ct=0, bg=`) → финальный
    `rresp` = `g-recaptcha-response`.
 
@@ -55,7 +56,7 @@ Grid-путь (`v2_grid.solve_grid`): задача с `image_b64` + `prompt` п�
 
 | код | симптом | причина | что делать |
 |---|---|---|---|
-| `ERR_CONFIG` | «requires ctx.http»; «audio path needs ctx.extra['audio_transcriber']» | лейн без транспорта или без ASR | см. §7 |
+| `ERR_CONFIG` | «audio path needs ctx.extra['audio_transcriber'] or ctx.extra['solver_registry']» | контекст без ASR-инъекции и без registry (не штатный воркер) | см. §7 |
 | `ERR_CHALLENGE_EXPIRED` | anchor без `recaptcha-token`; reload отказал (`q` или `a`) | протух release-slug / origin, «сожжённая» сессия | пришлось бы прислать `v`; повторить на новом профиле |
 | `ERR_UNSOLVABLE` | нет sitekey/site_url; пустая расшифровка; userverify отверг текст | payload или качество ASR | проверить `image_b64`-ветку / аудио |
 | `ERR_UNSOLVABLE` | grid-путь без `image_b64`/`prompt` | смешанный payload | не смешивать токен-задачу и сетку |
@@ -75,12 +76,14 @@ Grid-путь (`v2_grid.solve_grid`): задача с `image_b64` + `prompt` п�
 
 ## 7. FILL / live-риски
 
-1. **ASR не подключён в воркере.** `services/worker_http/context.py` кладёт в `ctx.extra` только
-   `redis/pg/http_factory/hcaptcha_js`; ни `audio_transcriber`, ни `solver_registry` там нет.
-   Значит audio-путь в проде падает `ERR_CONFIG` — это дыра интеграции, не солвера.
-2. **Лейн `cv` без транспорта.** `services/worker_cv/worker.py` (строка 140) создаёт
-   `SolverContext` без `http`, а тип живёт в `cv`: по коду `ERR_CONFIG` на первом же запросе.
-   На живом воркере не проверено.
+1. **ASR подключён через registry.** `worker_http` и `worker_cv` кладут `solver_registry` в
+   `ctx.extra` (один тест на это — `tests/services/test_worker_http_runtime.py`);
+   `solvers/recaptcha/_asr.py` берёт оттуда `AudioCaptchaSolver` для `CaptchaType.AUDIO`.
+   `audio_transcriber` остаётся опциональной внешней инъекцией. Штатный путь требует весов
+   Whisper на воркере; без них — `ERR_CONFIG` из `audio_captcha`, а не из reCAPTCHA-солвера.
+2. **Транспорт есть.** Тип живёт в `cv`, но `worker_cv` выдаёт per-task `ctx.http`
+   (`_run_one` → `context.task_context`), поэтому anchor/reload/userverify идут через клиент
+   задачи. `ERR_CONFIG` по HTTP здесь не возникает.
 3. Release-slug Google меняется; при отказе солвер один раз перечитывает `api.js`. Частоту
    смены не измеряли.
 4. Pass rate не измерен; `experimental=False` стоит с baseline, не по канарейке.

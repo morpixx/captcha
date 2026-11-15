@@ -4,7 +4,7 @@
 
 - **captcha type:** `CaptchaType.BASILISK` (`basilisk`) — Basilisk: ad-funded click-капча «кликни логотип компании»; ответ — 32-hex `captcha_response`.
 - **antibot family:** нет. API `api.basiliskcaptcha.com`, виджет с `cdn.basiliskcaptcha.com`.
-- **lane:** `cv` (по каталогу, нужен click-детектор), **mode:** `http`.
+- **lane:** `cv` (по каталогу, нужен click-детектор; `worker_cv` даёт per-task `ctx.http`), **mode:** `http`.
 - **tier:** 3 — `experimental=True`; имена полей ответа помечены `FILL`.
 - **code:** `solvers/interactive/basilisk/{solver,wire,endpoints}.py`.
 
@@ -47,7 +47,7 @@
 | `ERR_UNSOLVABLE` | `image body is empty`, `broken data URI` | битый ассет | новый раунд |
 | `ERR_CHALLENGE_EXPIRED` | `verify returned no captcha_response` | челлендж потреблён/отвергнут | новый раунд |
 | `ERR_CHALLENGE_EXPIRED` | 401/403/409/410/428/429 в `wire` | сессия/токен | свежий раунд |
-| `ERR_CONFIG` | `basilisk solver needs ctx.http` | воркер без HTTP | см. §7 |
+| `ERR_CONFIG` | `basilisk solver needs ctx.http` | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_cv` |
 | `ERR_GENERIC` | `basilisk challenge failed`/`not JSON` | 5xx/не-JSON | `status` в контексте |
 
 ## 6. Canary / фикстуры
@@ -64,7 +64,7 @@
 
 ## 7. FILL / live-риски
 
-1. **Лейн против контекста.** Каталог держит тип в `cv`, `worker_cv` не даёт `ctx.http` — на нём задача падает в `ERR_CONFIG` до первого запроса.
+1. **Транспорт.** `worker_cv` выдаёт per-task `ctx.http` (`_run_one` → `context.task_context`); `ERR_CONFIG` из §5 возможен только на контексте, собранном без клиента.
 2. `wire.py` помечает `FILL` на именах полей трека (`coords`/`track`): отправляются оба варианта, живой захват не подтверждает ни один.
 3. `dwell` — расчётная величина из трека; требует ли сервер «человеческую» паузу, не проверено.
 4. Ответ одноразовый и привязан к сессии/IP: клиент обязан отправить его сразу.

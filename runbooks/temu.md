@@ -54,7 +54,7 @@
 | `ERR_UNSOLVABLE` | `slider challenge has no piece image`, `click challenge has no target text`, `image body is empty`, `broken data URI` | смена формы челленджа | `keys`/`variant` в контексте |
 | `ERR_CHALLENGE_EXPIRED` | `verify returned no session cookie or token` | челлендж потреблён/отвергнут | новый раунд |
 | `ERR_CHALLENGE_EXPIRED` | 401/403/409/410/428/429 в `wire` | сессия/подпись не сошлись | свежий `anti_content` |
-| `ERR_CONFIG` | `temu solver needs ctx.http` | воркер без HTTP | см. §7 |
+| `ERR_CONFIG` | `temu solver needs ctx.http` | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_http` |
 | `ERR_GENERIC` | `temu init failed` / `not JSON` | 5xx/не-JSON | `status` в контексте |
 
 ## 6. Canary / фикстуры

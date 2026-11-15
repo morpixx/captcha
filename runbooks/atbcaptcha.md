@@ -4,7 +4,7 @@
 
 - **captcha type:** `CaptchaType.ATBCAPTCHA` — atbCaptcha / AiSecurius (顶象): slider или 3-point click, ответ = `captchaVerification`.
 - **antibot family:** AiSecurius (atb); отдельного `AntibotEngine` нет.
-- **lane:** `cv`, **mode:** `both`.
+- **lane:** `browser` (по каталогу), **mode:** `both` (`solve_http` + `solve_browser`).
 - **tier:** 3 — `experimental=True`; схема по публичному SDK, live не снят.
 - **code:** `solvers/interactive/atbcaptcha/{solver,wire,endpoints,browser}.py`.
 
@@ -51,7 +51,7 @@
 | `ERR_UNSOLVABLE` | нет `captcha_id`; `get` без token/pic; силер вернул пусто; клик без точек | битый payload / смена схемы | сверить `keys`, `code`, `msg` в контексте |
 | `ERR_NEEDS_BROWSER` | эскалация | нет `ctx.extra["atb_sealer"]` | подключить силер или браузерный лейн |
 | `ERR_CHALLENGE_EXPIRED` | `code`/текст expire/timeout/overdue/过期/超时 | раунд протух | ускорить шаги 1–6 |
-| `ERR_CONFIG` | requires ctx.http / needs ctx.browser | лейн без клиента | см. §7 |
+| `ERR_CONFIG` | `atbcaptcha browser lane needs ctx.browser` | контекст без browser-провайдера (не штатный воркер) | штатный `worker_browser` его даёт |
 | `ERR_INTERNAL` (`CaptchaError`) | verification при `success != true`; или verification нет | vendor-ответ не по схеме | логи `code`/`msg` |
 
 ## 6. Canary / фикстуры
@@ -68,8 +68,9 @@
 ## 7. FILL / live-risks
 
 1. `atb_sealer` не подключён в `services/` — HTTP-путь всегда доходит до шага 5.
-2. Лейн `cv`: `services/worker_cv/worker.py` создаёт `SolverContext` без `http` (строка 140), а
-   `ERR_NEEDS_BROWSER` не обрабатывается — эскалации в браузер нет. По коду, live не проверено.
+2. Лейн `browser`: `worker_browser` даёт `ctx.browser`, а `ERR_NEEDS_BROWSER` из HTTP-пути
+   обрабатывает `worker_http` (один прыжок, `MAX_LANE_HOPS`). В cv-лейн тип не маршрутизируется
+   (`domain/catalog.py`). По коду, live не проверено.
 3. Не проверено live: формат `ts`, реальная схема `data` (AES-GCM ключ выводится страницей —
    не воспроизводится), набор полей `get`.
 4. `TYPE_CLICK = 2` и `TYPE_SLIDER = 1` взяты из публичного SDK, не сверены с живым тенантом.

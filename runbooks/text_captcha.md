@@ -30,7 +30,7 @@
 1. `resolve_endpoint`: проверка абсолютного http(s), запрет credentials в URL, metadata-хостов (`169.254.169.254`, `metadata.google.internal`, `100.100.100.200`), link-local/multicast; per-task `endpoint` разрешён только при совпадении origin с `LLM_ENDPOINT` (иначе SSRF-сток и утечка ключа).
 2. `resolve_model`: `payload["model"]` либо `LLM_MODEL`, длина ≤ 128.
 3. Тело: `{model, messages:[{system: SYS_PROMPT}, {user: question}], temperature: 0, max_tokens: 32, stream: false}`; `authorization: Bearer <LLM_API_KEY>`, если ключ задан.
-4. Клиент: `ctx.http`, если у него есть `post`; иначе короткоживущий `httpx.AsyncClient` — `cv`-воркер не даёт общего HTTP-клиента.
+4. Клиент: `ctx.http`, если у него есть `post` (штатный `worker_cv` выдаёт per-task клиент); иначе короткоживущий `httpx.AsyncClient` — для контекста без клиента (тесты, встраивание).
 5. `chat()`: до 2 попыток на 5xx/транспорт, пока жив бюджет; таймаут 30 с или остаток дедлайна.
 6. `strip_answer`: первая строка, срезается префикс «answer is», кавычки и хвостовая пунктуация.
 

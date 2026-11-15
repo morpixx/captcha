@@ -4,7 +4,7 @@
 
 - **captcha type:** `CaptchaType.CUTCAPTCHA` — слайдер-пазл с треком указателя, ответ = `token`.
 - **antibot family:** CutCaptcha (собственный вендор); `AntibotEngine` нет.
-- **lane:** `cv`, **mode:** `http` только.
+- **lane:** `cv` (`worker_cv` выдаёт per-task `ctx.http`), **mode:** `http` только.
 - **tier:** 3 — `experimental=True`: эндпоинты взяты из публичных интеграций, с живого
   тенанта не снимались (об этом прямо говорит `endpoints.py`).
 - **code:** `solvers/interactive/cutcaptcha/{solver,wire,endpoints}.py`.
@@ -46,7 +46,7 @@
 |---|---|---|---|
 | `ERR_UNSOLVABLE` | нет `apikey`; нет cid/bg/piece; offset <= 0 после коррекции | битый payload / детект не сошёлся | проверить картинки, `match_score` |
 | `ERR_CHALLENGE_EXPIRED` | `code` expired/challenge_expired, текст expire/timeout/not found | раунд протух | ускорить шаги 1–5 |
-| `ERR_CONFIG` | requires ctx.http | лейн без транспорта | см. §7 |
+| `ERR_CONFIG` | requires ctx.http | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_cv` |
 | `ERR_INTERNAL` (`CaptchaError`) | token при `error`/fail-флаге; или token нет | vendor-ответ не по схеме | логи `success`/`error` |
 
 ## 6. Canary / фикстуры
@@ -65,8 +65,9 @@
 ## 7. FILL / live-risks
 
 1. Эндпоинты и тела **не сняты с живого тенанта** — это и есть причина `experimental`.
-2. Лейн `cv` без транспорта: `services/worker_cv/worker.py` (строка 140) не даёт `ctx.http`,
-   поэтому `solve_http` падает `ERR_CONFIG` на шаге 1. По коду; live не проверено.
+2. Транспорт есть: `services/worker_cv/worker.py` выдаёт per-task `ctx.http` (`_run_one` →
+   `context.task_context`), так что шаг 1 идёт через клиент задачи; `ERR_CONFIG` из §5
+   возможен только на контексте без клиента. По коду; live не проверено.
 3. Не проверено: минимальная длина трека (12 — допущение), требование к `t`-монотонности,
    реакция на неверный `host`.
 
