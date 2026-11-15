@@ -35,11 +35,12 @@ from urllib.parse import urlsplit
 
 import structlog
 
+from captcha.adapters import netguard
 from captcha.adapters.browser.geoip import GeoIPCache, resolve_exit_ip
 from captcha.adapters.browser.prefs import build_options
 from captcha.adapters.browser.proxy import parse_proxy
 from captcha.adapters.browser.supervisor import PROFILE_PREFIX, Supervisor, remove_profile
-from captcha.adapters.netguard import ALLOWED_SCHEMES, UrlRejectedError, ensure_public_url
+from captcha.adapters.netguard import ALLOWED_SCHEMES, UrlRejectedError
 from captcha.domain.errors import CaptchaError, ConfigError, ProxyError
 from captcha.domain.errors import TimeoutError as CaptchaTimeout
 from captcha.domain.ports import BrowserSpec
@@ -120,7 +121,7 @@ def _make_route_handler(
             )
             return
         try:
-            await asyncio.to_thread(ensure_public_url, url, field="page_url")
+            await asyncio.to_thread(netguard.ensure_public_url, url, field="page_url")
         except UrlRejectedError as exc:
             await _block(route, exc, job_id=job_id, navigation=navigation, on_block=on_block)
             return
@@ -348,7 +349,7 @@ class CamoufoxSession:
         wait_until: str = "domcontentloaded",
         timeout_ms: int = 60_000,
     ) -> Any:
-        ensure_public_url(url, field="websiteURL")
+        netguard.ensure_public_url(url, field="websiteURL")
         page = await self.page()
         self._last_rejection = None
         try:
@@ -368,7 +369,7 @@ class CamoufoxSession:
             raise CaptchaError("page navigation failed", context={"url": safe_url(url)}) from exc
         final_url = getattr(page, "url", None)
         if final_url:
-            ensure_public_url(str(final_url), field="final_url")
+            netguard.ensure_public_url(str(final_url), field="final_url")
         return page
 
     async def load_cookies(self, cookies: list[dict[str, Any]]) -> None:
