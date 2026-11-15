@@ -9,6 +9,29 @@ This report re-checks the tree after the work merged between the previous report
 Every number below is reproducible with the commands in §8. Where a claim could not be checked
 without a live account/proxy it is listed in §7, not asserted.
 
+## Post-report fixes (2026-11-15, `edc3114`)
+
+The body below is the `0f54c14` snapshot and is left as recorded. After it, `edc3114` —
+*fix(capabilities): browser-gated types require a browser heartbeat* — closed B3, and the
+doc pass closed B8:
+
+| item | status now | evidence |
+|---|---|---|
+| B3 browser gate bypass | **CLOSED** | `CapabilityRegistry.live_types()` admits a type only from its catalog lane and admits `requires_browser()` types only from a live `browser` heartbeat; `worker_http._http_capabilities()` advertises `lane_for(ct) == "http" and not requires_browser(ct)`. Regression: `tests/adapters/test_capabilities.py::test_http_heartbeat_cannot_advertise_browser_types` (an HTTP heartbeat cannot sell `hcaptcha`/`turnstile`, still sells `recaptcha_v3`). |
+| B1 canary fixtures | **CLOSED (code/corpus)** | 10 tracked fixtures / 10 types under `tests/canary/fixtures/`, pinned by `tests/canary/test_fixtures.py`. One replay case per type, not L1. |
+| B5 hard stubs | **CLOSED (code)** | zero `not_implemented()` call sites under `src/captcha`; the helper at `solvers/antibot/_base.py:161` is dead code. |
+| B8 stale gate docs | **CLOSED (docs)** | README, AGENTS, architecture, plan, operations, SECURITY, runbooks index and `.env.example` synced to the current tree. |
+
+Inventory at `edc3114`: 63 `CaptchaType` (62 vendor + `hopscotch`), 60 `SOLVERS` / 60
+registered, lanes 25/28/2/8 including `hopscotch` (vendor 25/27/2/8), 42 experimental
+solvers = 38/62 experimental-only vendor types, 10 canary fixtures, 0 stubs, netguard wired
+on gateway + transport + redirects, browser gate via heartbeat, 4 CI jobs. Gate 1 at this
+commit: **2448 passed, 12 skipped** — the §0 run plus the one B3 regression test.
+
+Still open: B2 is documented, not armed — `ALLOW_EXPERIMENTAL_TASKS` still defaults to
+`True` (beta `1` in `.env.example`, prod `0`); B6/B7 unchanged; the final gate remains
+**0/62 at L3**.
+
 ## 0. Gate summary
 
 | # | gate | status | evidence |
@@ -189,6 +212,8 @@ error mapping (311 passed), not live success.
 
 ## 3. Previous blockers: what closed, what did not
 
+_Status at `0f54c14`; current status is in Post-report fixes above._
+
 | id | previous blocker | status now | evidence | residual |
 |---|---|---|---|---|
 | B1 | canary has no fixtures | **CLOSED (code/corpus)** | 10 tracked fixtures, `tests/canary/test_fixtures.py` pins the set, schema, solution keys and a fake-gateway run; compose mount target exists | one replay case per type, not L1; empty set still reports `pass_rate=1.0` and exit 0 (see §5) |
@@ -253,6 +278,8 @@ sellable), but the default deployment sells all 63. The variable is absent from
 at `config.py:25-27`, not a completed contract item.
 
 ## 5. Documentation drift found during verification
+
+_Drift at `0f54c14`; the doc pass in Post-report fixes removed it. Line numbers refer to that snapshot._
 
 | file:line | claim | fact |
 |---|---|---|

@@ -55,10 +55,10 @@ type health — `captcha:typehealth:<type>` (TTL 12 ч).
 | security | `ADMIN_TOKEN`, `API_KEY_PEPPER`, `RATE_LIMIT_CREATE_PER_MIN`, `MAX_ACTIVE_TASKS_PER_ACCOUNT`, `MAX_DAILY_TASKS`, `MAX_DAILY_SPEND`, `ALLOW_EXPERIMENTAL_TASKS` |
 | pingback | `CALLBACK_TIMEOUT_SEC`, `CALLBACK_MAX_ATTEMPTS` |
 
-**Расхождение:** `.env.example` перечисляет browser/canary/security-переменные, но не
-содержит `ALLOW_EXPERIMENTAL_TASKS` — в beta он по умолчанию `1`, а прод по контракту §7
-обязан ставить `0` (иначе продаются типы, у которых единственный солвер `experimental`).
-До правки примера сверяйтесь с `config.py`.
+**`ALLOW_EXPERIMENTAL_TASKS`:** `.env.example` содержит переменную с beta-значением `1`;
+прод по контракту §7 обязан ставить `0` (иначе продаются типы, у которых единственный
+солвер `experimental`). Дефолт `config.py` — тоже `1`, поэтому на стенде без `.env` гейт
+выключен.
 
 Обязательные для прода: `API_KEY_PEPPER` (непустой), `ADMIN_TOKEN`, `POSTGRES_URL`,
 `REDIS_URL`, `CANARY_ALERT_WEBHOOK`. Пустой `ADMIN_TOKEN` = выключенная админка, пустой
@@ -152,8 +152,8 @@ type health — `captcha:typehealth:<type>` (TTL 12 ч).
    продажи по L3 должен отреагировать (см. `docs/plan.md` §2 и открытый вопрос №7).
 
 Проверка после отката: `/readyz` 200, `make check`, один `make smoke` по затронутому типу,
-канарейка `--once` (фикстуры есть на `friendly_captcha` и `altcha`; для остальных типов
-прогон пустой и ничего не доказывает).
+канарейка `--once` (в репозитории 10 фикстур на 10 типов; для остальных 53 типов прогон
+пустой и ничего не доказывает).
 
 ## 7. Ёмкость
 
