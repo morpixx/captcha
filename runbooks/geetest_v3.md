@@ -2,66 +2,84 @@
 
 ## 1. Snapshot
 
-- **captcha type:** `CaptchaType.GEETEST_V3` — слайдер с разрезом картинки и AES-обёрнутым payload
-- **antibot family:** GeeTest — slider-капча третьего поколения
-- **mode:** `http` (CV-примитив вызывается in-process через `InteractiveBase._solve_cv`)
-- **tier:** 3 (skeleton) — протокол собран, wire-константы не сняты с живой сессии
-- **lane:** `cv`
+- **captcha type:** 'CaptchaType.GEETEST_V3' — слайдер с разрезом картинки и AES-обёрнутым payload
+- **antibot family:** GeeTest — слайдер третьего поколения
+- **mode:** 'http' (CV-примитив вызывается in-process через 'InteractiveBase._solve_cv')
+- **tier:** 3 (skeleton→protocol) — публичная схема 2026 портирована, live-сессия не снималась
+- **lane:** 'cv'
+- **experimental:** 'True' до L3 canary
 
 ## 2. Payload shape
 
-```json
+~~~json
 {
   "type": "geetest_v3",
   "websiteURL": "https://target.example/login",
   "gt": "<gt>",
   "challenge": "<challenge>",
-  "api_server": "<optional host>"
+  "api_server": "<optional host>",
+  "risk_type": "<optional, e.g. slide>"
 }
-```
+~~~
 
-Обязательные: `websiteURL`, `gt`, `challenge`. `api_server` — переопределение хоста
-(легаси-клиенты шлют его как `api_server`).
+Обязательные: 'websiteURL', 'gt', 'challenge'. 'api_server' — переопределение хоста
+(легаси-клиенты шлют его как 'api_server'); enterprise-сайты route'ят GeeTest через
+свой поддомен и передают его здесь. 'risk_type' прокидывается в 'get.php'/'ajax.php',
+если сайт его требует.
 
 ## 3. Flow
 
-1. `GET /gettype.php?gt=…&callback=…` → путь к JS-бандлу (нужен только для версии `ep`).
-2. `GET /get.php?gt=…&challenge=…&lang=…&client_type=web` → JSON с `bg`/`slice` и флагами.
-3. Скачать обе картинки, отдать в `_solve_cv(SLIDER, …)` — вернётся `offset`.
-4. `payload.build_w_v3`: JSON-тело → AES-128-CBC (ключ = сгенерированный `guid`, IV = 16 ASCII `'0'`) → hex.
-5. Вторая половина `w` — RSA-PKCS1v15 того же ключа; публичный модуль берётся из бандла (FILL #2).
-6. `POST /ajax.php` (или второй `/get.php` — FILL #12) с `w`, `challenge`, `gt` → `validate`/`seccode`.
+1. **register** — сайт получает 'gt' + 'challenge' у себя; в задаче они уже есть.
+2. 'GET /get.php' — round metadata + первый 'w' (custom AES-хвост + RSA).
+3. 'GET /ajax.php?type=slide' — режим раунда; 'bg'/'slice' тут редко, но остаются fallback'ом.
+4. 'GET /get.php' #2 — перемешанные 'bg'/'fullbg'/'slice', 'c'/'s' и 'challenge' + 2 символа (34).
+5. 'POST /ajax.php' — answer 'w' (только AES-половина) → 'validate'/'seccode'.
 
-## 4. FILL: что снять с живой сессии
+## 4. Wire-схема (2026)
+
+- 'w' = 'custom_encode(AES-128-CBC(body, key16, iv="0000000000000000"))' + 'hex(RSA-PKCS1v15(key16))'
+  на первом раунде; на answer-раунде RSA-хвоста нет (два публичных разбора 2025 совпадают).
+- 'custom_encode' — модифицированный base64 ('p[$_CEEJe(1196)]'): 3 байта → 4 символа
+  через маски '7274496/9483264/19220/235', алфавит 'A-Za-z0-9()', хвост добивается '.'.
+- 'userresponse' = 'H(offset, challenge34)': последние 2 base36-символа дают сдвиг,
+  первые 32 дедуплицируются в 5 корзин, вес'а '1/2/5/10/50' разбирают сумму.
+- 'aa' = 'getAA(track_encoded, c, s)': байты 's' вставляются в зашифрованный трек
+  по '(c0*x^2 + c2*x + c4) % len(track)'.
+- 'rp' = 'md5(gt + challenge[:32] + passtime)' на первом раунде и
+  'md5(gt + challenge + last track t)' на answer-раунде.
+- RSA-модуль и 'e=65537' — публичный ключ GeeTest (тот же, что в v4).
+
+## 5. FILL: что ещё снять с живой сессии
 
 | # | где | что нужно |
 |---|---|---|
-| 1 | payload.py `AES_IV` | подтвердить, что IV всё ещё 16 ASCII `'0'` — открыть бандл, найти `iv` |
-| 2 | payload.py `V3_RSA_MODULUS_HEX` | `setPublic(<N>,<e>)` в `slide.<ver>.js`; без него `w` не собрать |
-| 3 | payload.py `V3_RSA_EXPONENT` | там же, второй аргумент `setPublic` |
-| 4 | payload.py `V3_SDK_VERSION` | `ep.v` из одного расшифрованного тела verify |
-| 5 | payload.py `userresponse` | реальное значение — `H(distance, challenge)`; снять тройку и портировать H |
-| 6 | payload.py `imgload` | реальный диапазон мс между запросом картинок и ответом |
-| 7 | payload.py `aa` | `getAA(track, c, s)`; нужны `c`/`s` из картинки и формат трека |
-| 8 | payload.py `ep` | форма объекта, включая `tm` |
-| 9 | v3.py выбор эндпоинта | какой вызов реально отдаёт `bg`/`slice`: `ajax.php` или второй `get.php` |
-| 10 | v3.py распаковка bg | порядок обратной перестановки 52 тайлов перед `_solve_cv` |
+| 1 | 'v3_payload.V3_SDK_VERSION' | 'ep.v' из одного расшифрованного verify-тела |
+| 2 | 'wire.V3_ENCODER_ALPHABET' | подтвердить алфавит/маски в текущем 'slide.<ver>.js' |
+| 3 | 'v3.py' перед '_solve_cv' | порядок восстановления 52 тайлов 'bg' (сейчас CV видит перемешанную пару) |
+| 4 | 'v3.py' 'aa' | подтвердить, что 'c'/'s' всегда приходят во втором 'get.php' |
+| 5 | 'v3.py' первый 'w' | проверить, что сервер принимает непустой первый 'w' с пустым 'userresponse' |
 
-## 5. Solution keys
+## 6. Ошибки
 
-См. `domain/solution.py` — проекция по `SolutionKind`. Всё, чего нет в каноническом
-наборе, солвер кладёт в `SolverResult.extra` и уходит клиенту насквозь.
+- 'ChallengeExpiredError' — 'get.php'/'ajax.php' вернули 'status != success' (stale challenge).
+- 'UnsolvableError' — нет 'gt'/'challenge', нет картинок, 'challenge' короче 34, неизвестный hash в PoW.
+- 'ConfigError' — невалидный 'api_server', пустой RSA-модуль.
+- 'CaptchaError' — verify без 'validate'.
 
-## 6. Проверка
+## 7. Solution keys
 
-```bash
-uv run pytest -q tests/solvers/interactive -k geetestv3
-uv run python -m captcha.services.cli expected-models
-```
+См. 'domain/solution.py' — 'challenge', 'validate', 'seccode'. Vendor-специфичные
+поля уходят в 'SolverResult.extra' насквозь.
 
-## 7. Известные риски
+## 8. Проверка
 
-- Модуль RSA меняется с релизом бандла — это самый частый источник «перестало работать».
-- `userresponse` не равен сырому offset: сервер ждёт хеш, поэтому неверный H даёт `fail`
-  при визуально правильном ответе.
+~~~bash
+uv run pytest -q tests/solvers/interactive/test_geetest.py tests/solvers/interactive/test_geetest_flow.py
+uv run ruff check src/captcha/solvers/interactive/geetest tests/solvers/interactive
+~~~
 
+## 9. Известные риски
+
+- Модуль/энкодер меняются с релизом бандла — это первый источник «перестало работать».
+- 'userresponse' не равен сырому offset: неверный H даёт 'fail' при визуально верном ответе.
+- Перемешанный 'bg' без восстановления тайлов даёт смещённый offset.
