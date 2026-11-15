@@ -93,7 +93,6 @@ SOLVERS: tuple[str, ...] = (
     # score_based
     "captcha.solvers.score_based.recaptcha_v3:RecaptchaV3EnterpriseSolver",
     "captcha.solvers.score_based.recaptcha_v3:RecaptchaV3Solver",
-    "captcha.solvers.score_based.turnstile:TurnstileInvisibleSolver",
     # slider
     "captcha.solvers.slider.slider:SliderSolver",
 )
