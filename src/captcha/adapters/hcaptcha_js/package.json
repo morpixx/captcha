@@ -1,0 +1,17 @@
+{
+  "name": "captcha-hcaptcha-js",
+  "version": "0.1.0",
+  "private": true,
+  "description": "hCaptcha hsw/hsj bundle worker: jsdom + canvas realm, stdio protocol",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "jsdom": "^26.1.0"
+  }
+}

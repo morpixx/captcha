@@ -1,0 +1,10 @@
+{
+  "c": {
+    "type": "image_label_binary",
+    "req": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsIjoiL2NoYWxsZW5nZS9hYWFhIiwibiI6ImNoYWxsZW5nZSIsInQiOiJjMGZmZWUifQ.5m5n1r8kQ2wV7cY3bX9dL0aZ4eF6gH8jK2mN4pQ6rS8",
+    "key": "challenge-key-02"
+  },
+  "pass": false,
+  "success": false,
+  "generated_pass_UUID": null
+}
