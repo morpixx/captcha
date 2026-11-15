@@ -1,12 +1,16 @@
-"""Friendly Captcha PoW solver.
+"""Friendly Captcha v1 proof-of-work solver.
 
-Protocol (as handed by this project's spec):
-  server -> {signature, difficulty D, workers W, salt_base}
-  client -> for each worker i in [0..W): find nonce n s.t.
-            leading_zero_bits( sha256(salt_base || u32le(i) || u64le(n)) ) >= D
+Wire (FriendlyCaptcha/friendly-pow):
+  server -> "<signature>.<base64 puzzle buffer>"
+  buffer -> u32be timestamp | u32be account | u32be app | u8 version | u8 expiry |
+            u8 solutions | u8 difficulty | 8 reserved | 8 nonce | [32 bytes data]
+  client -> zero-pad the buffer to 128 bytes, put a candidate into the last 8
+            bytes, keep it while blake2b-256(buffer)[:4] as u32le is below
+            T = floor(2 ** ((255.999 - difficulty) / 8))
+  token  -> "<signature>.<b64 buffer>.<b64 solutions>.<b64 diagnostics>"
 
-Token: base64 of {"solutions":[{"worker":i,"nonce":n},...],
-                  "response_signature":..., "worker_count":W}.
+v2 (session signals, pointer/keyboard telemetry) is a browser protocol and is out
+of scope here - see docs/reverse-2026.md section 12.
 """
 
 from __future__ import annotations
@@ -15,206 +19,177 @@ import asyncio
 import base64
 import binascii
 import hashlib
-import json
-import logging
-import os
-import struct
 import time
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from captcha.domain import CaptchaType, SolverResult, Task
-from captcha.domain.errors import CaptchaError, UnsolvableError
+from captcha.domain.errors import ChallengeExpiredError, UnsolvableError
 from captcha.domain.errors import TimeoutError as CaptchaTimeout
 from captcha.solvers import Solver, SolverContext, SolverInfo
-from captcha.solvers.pow._hash import leading_zero_bits
+from captcha.solvers.pow._hash import difficulty_threshold, hash_meets_threshold
 
-log = logging.getLogger(__name__)
+_CORE_BYTES = 32
+_MAX_BYTES = 64
+_HASH_INPUT_BYTES = 128
+_SOLUTION_BYTES = 8
+_SOLUTION_OFFSET = _HASH_INPUT_BYTES - _SOLUTION_BYTES
+_VERSION = 1
+_EXPIRY_UNIT_SEC = 300
+_UINT16_MAX = 0xFFFF
+_DEADLINE_CHECK_MASK = 0xFF
+# Worker-http caps a task at ~30s; without a task deadline we still refuse to mine
+# forever on a hostile difficulty byte.
+_DEFAULT_BUDGET_SEC = 30.0
+_SOLVER_ID = 0  # 0 = unspecified, 1 = JS fallback, 2 = WASM32 (server-side only).
 
-# Byte layout of each worker's mining input. One place to edit if the server
-# flips endianness or widens the fields.
-_WORKER_IDX_FMT = "<I"  # u32 little-endian
-_NONCE_FMT = "<Q"  # u64 little-endian
-_NONCE_MAX = (1 << 64) - 1
-_DEADLINE_CHECK_MASK = 0xFFF  # check wall clock every 4096 hashes
 
-# Guardrails — a hostile payload shouldn't let us burn the box.
-_MAX_WORKERS = 10_000
-_MAX_DIFFICULTY = 256  # a sha256 digest is 256 bits
+@dataclass(frozen=True, slots=True)
+class Puzzle:
+    """Decoded friendly-pow puzzle buffer."""
+
+    signature: str
+    buffer: bytes
+    timestamp: int
+    expires_in: int
+    solutions: int
+    difficulty: int
 
 
-def _solve_worker(
-    salt_base: bytes,
-    worker_idx: int,
-    difficulty: int,
-    deadline_mono: float | None,
-) -> int:
-    """Mine one worker's nonce. Runs on a thread (sha256 drops the GIL)."""
-    prefix = salt_base + struct.pack(_WORKER_IDX_FMT, worker_idx)
-    pack_nonce = struct.Struct(_NONCE_FMT).pack
-    sha = hashlib.sha256
-    lzb = leading_zero_bits
+def _b64decode(raw: str, field: str) -> bytes:
+    text = raw.strip()
+    padded = text + "=" * ((-len(text)) % 4)
+    try:
+        return base64.b64decode(padded, validate=True)
+    except (binascii.Error, ValueError):
+        pass
+    try:
+        return base64.urlsafe_b64decode(padded)
+    except (binascii.Error, ValueError) as exc:
+        raise UnsolvableError(f"friendly: {field} is not valid base64", context={"error": str(exc)}) from exc
 
-    n = 0
-    while n <= _NONCE_MAX:
-        digest = sha(prefix + pack_nonce(n)).digest()
-        if lzb(digest) >= difficulty:
-            return n
-        n += 1
-        if (n & _DEADLINE_CHECK_MASK) == 0 and deadline_mono is not None and time.monotonic() > deadline_mono:
-            raise CaptchaTimeout(
-                "friendly: deadline exceeded while mining",
-                context={"worker": worker_idx, "nonce": n, "difficulty": difficulty},
-            )
+
+def _split_puzzle(payload: dict[str, Any]) -> tuple[str, str]:
+    """Return (signature, base64 puzzle buffer) from either wire shape."""
+    raw = payload.get("puzzle")
+    if isinstance(raw, str) and raw:
+        parts = raw.split(".")
+        if len(parts) == 2 and all(parts):
+            return parts[0], parts[1]
+        if len(parts) == 1:
+            signature = payload.get("signature")
+            if isinstance(signature, str) and signature:
+                return signature, parts[0]
+        raise UnsolvableError(
+            "friendly: puzzle must be '<signature>.<base64 buffer>'",
+            context={"dot_parts": len(parts)},
+        )
+    encoded = payload.get("puzzle_buffer") or payload.get("puzzleBuffer")
+    signature = payload.get("signature")
+    if isinstance(encoded, str) and encoded and isinstance(signature, str) and signature:
+        return signature, encoded
     raise UnsolvableError(
-        "friendly: nonce space exhausted",
-        context={"worker": worker_idx, "difficulty": difficulty},
+        "friendly: payload missing 'puzzle' (or 'signature' + 'puzzle_buffer')",
+        context={"keys": sorted(payload)},
     )
 
 
-def _parse_puzzle(payload: dict[str, Any]) -> tuple[str, int, int, bytes]:
-    """Accept compact `puzzle` string OR structured fields; return
-    (signature, difficulty, workers, salt_base_bytes)."""
-    if "puzzle" in payload:
-        s = payload["puzzle"]
-        if not isinstance(s, str):
-            raise UnsolvableError("friendly: puzzle must be string", context={"got": type(s).__name__})
-        parts = s.split(".")
-        if len(parts) != 4:
-            raise UnsolvableError("friendly: expected 4 dot-parts in puzzle", context={"parts": len(parts)})
-        sig, diff_s, workers_s, salt_hex = parts
-        try:
-            diff = int(diff_s)
-            workers = int(workers_s)
-            salt_bytes = binascii.unhexlify(salt_hex)
-        except (ValueError, binascii.Error) as exc:
-            raise UnsolvableError("friendly: puzzle decode failed", context={"error": str(exc)}) from exc
-        return sig, diff, workers, salt_bytes
-
-    sig = payload.get("signature")
-    diff = payload.get("difficulty")
-    workers = payload.get("workers")
-    salt = payload.get("salt_base")
-    if not isinstance(sig, str) or not isinstance(diff, int) or not isinstance(workers, int):
+def parse_puzzle(payload: dict[str, Any]) -> Puzzle:
+    """Decode and validate a friendly-pow v1 puzzle. Raises on wire drift."""
+    signature, encoded = _split_puzzle(payload)
+    buf = _b64decode(encoded, "puzzle buffer")
+    if not _CORE_BYTES <= len(buf) <= _MAX_BYTES:
         raise UnsolvableError(
-            "friendly: missing/invalid fields",
-            context={"keys": list(payload.keys())},
+            "friendly: puzzle buffer must be 32..64 bytes",
+            context={"length": len(buf)},
         )
-    if isinstance(salt, str):
-        try:
-            salt_bytes = binascii.unhexlify(salt)
-        except binascii.Error as exc:
-            raise UnsolvableError("friendly: salt_base hex decode", context={"error": str(exc)}) from exc
-    elif isinstance(salt, (bytes, bytearray)):
-        salt_bytes = bytes(salt)
-    else:
-        raise UnsolvableError("friendly: salt_base missing or wrong type", context={"got": type(salt).__name__})
-    return sig, diff, workers, salt_bytes
+    version = buf[12]
+    if version != _VERSION:
+        raise UnsolvableError("friendly: unsupported puzzle version", context={"version": version})
+    solutions = buf[14]
+    if solutions == 0:
+        raise UnsolvableError("friendly: puzzle asks for zero solutions")
+    timestamp = int.from_bytes(buf[0:4], "big")
+    expires_in = buf[13] * _EXPIRY_UNIT_SEC
+    if expires_in and time.time() > timestamp + expires_in:
+        raise ChallengeExpiredError(
+            "friendly: puzzle expired",
+            context={"timestamp": timestamp, "expires_in": expires_in},
+        )
+    return Puzzle(
+        signature=signature,
+        buffer=buf,
+        timestamp=timestamp,
+        expires_in=expires_in,
+        solutions=solutions,
+        difficulty=buf[15],
+    )
+
+
+def _monotonic_deadline(deadline_ts: float | None) -> float:
+    remaining = _DEFAULT_BUDGET_SEC if deadline_ts is None else deadline_ts - time.time()
+    if remaining <= 0:
+        raise CaptchaTimeout("friendly: task deadline already passed", context={"deadline_ts": deadline_ts})
+    return time.monotonic() + remaining
+
+
+def _mine(buf: bytes, count: int, difficulty: int, deadline: float) -> list[int]:
+    """Find `count` distinct 8-byte solutions. CPU-bound; runs in a worker thread."""
+    threshold = difficulty_threshold(difficulty)
+    base = buf.ljust(_HASH_INPUT_BYTES, b"\x00")[:_SOLUTION_OFFSET]
+    blake = hashlib.blake2b
+    found: list[int] = []
+    candidate = 0
+    while len(found) < count:
+        digest = blake(base + candidate.to_bytes(_SOLUTION_BYTES, "big"), digest_size=32).digest()
+        if hash_meets_threshold(digest, threshold):
+            found.append(candidate)
+        candidate += 1
+        if (candidate & _DEADLINE_CHECK_MASK) == 0 and time.monotonic() > deadline:
+            raise CaptchaTimeout(
+                "friendly: deadline exceeded while mining",
+                context={"found": len(found), "needed": count, "difficulty": difficulty},
+            )
+    return found
+
+
+def _token(puzzle: Puzzle, nonces: list[int], took_sec: int) -> str:
+    solutions = b"".join(n.to_bytes(_SOLUTION_BYTES, "big") for n in nonces)
+    diagnostics = bytes((_SOLVER_ID, (took_sec >> 8) & 0xFF, took_sec & 0xFF))
+    parts = (
+        puzzle.signature,
+        base64.b64encode(puzzle.buffer).decode("ascii"),
+        base64.b64encode(solutions).decode("ascii"),
+        base64.b64encode(diagnostics).decode("ascii"),
+    )
+    return ".".join(parts)
 
 
 class FriendlySolver(Solver):
-    """SHA-256 PoW, parallel over workers. CPU-bound; scales with core count."""
+    """blake2b-256 PoW over the friendly-pow v1 puzzle buffer. Pure CPU."""
 
     info: ClassVar[SolverInfo] = SolverInfo(
         name="friendly",
         types=(CaptchaType.FRIENDLY,),
         http=True,
-
-        version="0.1.0",
+        version="0.2.0",
     )
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._pool: ThreadPoolExecutor | None = None
-
-    async def prepare(self, ctx: SolverContext) -> None:
-        # One pool per solver instance, sized to physical cores.
-        max_workers = max(1, os.cpu_count() or 2)
-        self._pool = ThreadPoolExecutor(
-            max_workers=max_workers,
-            thread_name_prefix="friendly-pow",
-        )
-
-    async def shutdown(self) -> None:
-        if self._pool is not None:
-            self._pool.shutdown(wait=False, cancel_futures=True)
-            self._pool = None
-
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
-        signature, difficulty, workers, salt_base = _parse_puzzle(task.payload)
-
-        if not (0 < workers <= _MAX_WORKERS):
-            raise UnsolvableError("friendly: workers out of range", context={"workers": workers, "max": _MAX_WORKERS})
-        if not (0 <= difficulty <= _MAX_DIFFICULTY):
-            raise UnsolvableError(
-                "friendly: difficulty out of range", context={"difficulty": difficulty, "max": _MAX_DIFFICULTY}
-            )
-
-        # Lazy pool spin-up for callers who skipped prepare() (tests, canary).
-        if self._pool is None:
-            self._pool = ThreadPoolExecutor(
-                max_workers=max(1, os.cpu_count() or 2),
-                thread_name_prefix="friendly-pow",
-            )
-
-        mono_deadline = self._resolve_deadline(task.deadline_ts)
+        puzzle = parse_puzzle(task.payload or {})
+        deadline = _monotonic_deadline(task.deadline_ts)
 
         t0 = time.perf_counter()
-        loop = asyncio.get_running_loop()
-        futures = [
-            loop.run_in_executor(
-                self._pool,
-                _solve_worker,
-                salt_base,
-                i,
-                difficulty,
-                mono_deadline,
-            )
-            for i in range(workers)
-        ]
-        try:
-            nonces = await asyncio.gather(*futures)
-        except CaptchaError:
-            raise
-        except Exception as exc:
-            raise CaptchaError(
-                "friendly: worker crashed", context={"error": str(exc), "type": type(exc).__name__}
-            ) from exc
+        nonces = await asyncio.to_thread(_mine, puzzle.buffer, puzzle.solutions, puzzle.difficulty, deadline)
         took_ms = (time.perf_counter() - t0) * 1000.0
+        token = _token(puzzle, nonces, min(int(took_ms / 1000.0), _UINT16_MAX))
 
-        solutions = [{"worker": i, "nonce": n} for i, n in enumerate(nonces)]
-        token_obj = {
-            "solutions": solutions,
-            "response_signature": signature,
-            "worker_count": workers,
-        }
-        token_b64 = base64.b64encode(
-            json.dumps(token_obj, separators=(",", ":")).encode("ascii"),
-        ).decode("ascii")
-
-        log.info(
-            "friendly solved: difficulty=%d workers=%d took_ms=%.1f",
-            difficulty,
-            workers,
-            took_ms,
-        )
         return SolverResult(
-            token=token_b64,
+            token=token,
             extra={
-                "difficulty": difficulty,
-                "workers": workers,
-                "solutions": solutions,
-                "signature": signature,
+                "difficulty": puzzle.difficulty,
+                "solutions": puzzle.solutions,
+                "took_ms": round(took_ms, 1),
             },
             latency_ms=took_ms,
         )
-
-    @staticmethod
-    def _resolve_deadline(deadline_ts: float | None) -> float | None:
-        """Wall-clock deadline -> monotonic deadline. Raises if already past."""
-        if deadline_ts is None:
-            return None
-        budget = deadline_ts - time.time()
-        if budget <= 0:
-            raise CaptchaTimeout("friendly: already past deadline", context={"deadline_ts": deadline_ts})
-        return time.monotonic() + budget
