@@ -1,0 +1,58 @@
+# TLS ingress for the captcha API. The gateway publishes no host port, so this
+# is the only way in from the internet.
+#
+#   CAPTCHA_DOMAIN  public hostname; defaults to "localhost" (Caddy issues a
+#                   certificate from its internal CA for it)
+#   ACME_EMAIL      contact address for Let's Encrypt; empty means "internal CA",
+#                   which is what a LAN/staging deploy wants
+{
+	# The admin endpoint (:2019) never leaves the container and nothing here
+	# talks to it. Off is one less unauthenticated API.
+	admin off
+
+	# No access log on purpose: /in.php and /res.php carry clientKey in the
+	# query string, and /createTask bodies carry cookies and proxy credentials.
+	# Contract forbids logging either, so the ingress logs nothing; request
+	# counts and latencies come from the gateway's Prometheus metrics.
+
+	servers {
+		trusted_proxies static private_ranges
+		timeouts {
+			read_header 10s
+			read_body 60s
+			idle 2m
+		}
+	}
+}
+
+{$CAPTCHA_DOMAIN:localhost} {
+	tls {$ACME_EMAIL:internal}
+
+	encode zstd gzip
+
+	# hopscotch takes images up to 32 MiB base64 in a JSON body (contract §6);
+	# a larger body is not a task and does not need to reach the gateway.
+	request_body {
+		max_size 40MB
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	reverse_proxy gateway:8080 {
+		# A single upstream: the health check turns "gateway restarting" into a
+		# fast 503 instead of a request hanging on a dead socket.
+		health_uri /healthz
+		health_interval 15s
+		health_timeout 5s
+
+		# X-Forwarded-For / -Proto are set by the reverse proxy already; the
+		# gateway needs a single client address for rate limiting.
+		header_up X-Real-IP {remote_host}
+	}
+}

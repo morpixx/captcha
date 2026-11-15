@@ -1,5 +1,26 @@
 name: captcha
 
+# Production-shaped stack.
+#
+# Ingress is Caddy only. The gateway publishes no host port at all; the
+# datastores are bound to loopback for operators and are not part of the public
+# surface. `docker-compose.dev.yml` adds the gateway's loopback port back.
+#
+# Two services are behind profiles because they are either huge or periodic:
+#   --profile browser   worker-browser  (builds the ~2.5 GB Camoufox image)
+#   --profile canary    canary          (6h pass-rate suite against the gateway)
+#
+#   docker compose --profile browser --profile canary up -d
+#
+# Defaults that must hold in production come from .env.example: ADMIN_TOKEN,
+# API_KEY_PEPPER, CAPTCHA_DOMAIN, ACME_EMAIL.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-app: &app
   build:
     context: .
@@ -12,14 +33,23 @@ x-app: &app
   env_file:
     - path: .env
       required: false
+  logging: *logging
+
+# Shared by every Python service; the compose service name is the hostname.
+x-env: &env
+  REDIS_URL: redis://redis:6379/0
+  POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
+  S3_ENDPOINT: http://minio:9000
 
 services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports: ["6379:6379"]
+    # Loopback: the Redis instance holds task envelopes with proxy credentials.
+    ports: ["127.0.0.1:6379:6379"]
     command: redis-server --save 60 1 --loglevel warning
     volumes: [redis-data:/data]
+    logging: *logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -33,8 +63,9 @@ services:
       POSTGRES_USER: captcha
       POSTGRES_PASSWORD: captcha
       POSTGRES_DB: captcha
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: [postgres-data:/var/lib/postgresql/data]
+    logging: *logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U captcha -d captcha"]
       interval: 5s
@@ -49,9 +80,10 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes: [minio-data:/data]
+    logging: *logging
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -74,32 +106,53 @@ services:
     <<: *app
     command: ["python", "-m", "captcha.services.gateway"]
     environment:
-      REDIS_URL: redis://redis:6379/0
-      POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
-      S3_ENDPOINT: http://minio:9000
-    ports: ["8080:8080"]
+      <<: *env
+    # No host port: reachable from the compose network only, Caddy is the door.
+    expose: ["8080"]
     depends_on:
       redis: {condition: service_healthy}
       postgres: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
+    healthcheck:
+      # /healthz, not /readyz: readiness already gates traffic at the app level,
+      # and a Postgres blip must not restart-loop the gateway via its healthcheck.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   worker-http:
     <<: *app
     command: ["python", "-m", "captcha.services.worker_http", "--consumers", "8", "--concurrency", "512"]
     environment:
-      REDIS_URL: redis://redis:6379/0
-      POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
+      <<: *env
+      HCAPTCHA_JS_DEBUG: ${HCAPTCHA_JS_DEBUG:-0}
     depends_on:
       redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/captcha-healthcheck", "--redis"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   worker-protocol:
     <<: *app
     command: ["python", "-m", "captcha.services.worker_protocol"]
     environment:
-      REDIS_URL: redis://redis:6379/0
+      <<: *env
     depends_on:
       redis: {condition: service_healthy}
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/captcha-healthcheck", "--redis"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   worker-cv:
     <<: *app
@@ -110,12 +163,109 @@ services:
         EXTRAS: "--extra cv"
     command: ["python", "-m", "captcha.services.worker_cv"]
     environment:
-      REDIS_URL: redis://redis:6379/0
-      WORKER_CV_DEVICE: cpu
+      <<: *env
+      WORKER_CV_DEVICE: ${WORKER_CV_DEVICE:-cpu}
     depends_on:
       redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    stop_grace_period: 120s
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/captcha-healthcheck", "--redis"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Browser lane. One fresh Camoufox launch per task, ~700 MB RSS while a page
+  # is live, so sessions x RSS is what the memory limit has to cover:
+  # 12 x ~1.1 GB peak + Firefox shared memory. Tune WORKER_BROWSER_SESSIONS
+  # between 8 and 20 against measured RSS, do not guess.
+  worker-browser:
+    <<: *app
+    build:
+      context: .
+      dockerfile: infra/docker/browser.Dockerfile
+      args:
+        EXTRAS: ""
+        CAMOUFOX_VERSION: ${CAMOUFOX_VERSION:-0.5.6}
+    profiles: ["browser"]
+    command: ["python", "-m", "captcha.services.worker_browser"]
+    environment:
+      <<: *env
+      WORKER_BROWSER_SESSIONS: ${WORKER_BROWSER_SESSIONS:-12}
+      WORKER_BROWSER_HEADLESS: ${WORKER_BROWSER_HEADLESS:-1}
+      WORKER_BROWSER_MIN_FREE_MB: ${WORKER_BROWSER_MIN_FREE_MB:-2048}
+      XDG_CACHE_HOME: /opt/camoufox-cache
+      TMPDIR: /tmp
+      HCAPTCHA_JS_DEBUG: ${HCAPTCHA_JS_DEBUG:-0}
+    # Firefox uses /dev/shm for IPC; the 64 MB default crashes it under load.
+    shm_size: ${BROWSER_SHM_SIZE:-2gb}
+    # Per-task profiles (captcha-browser-*) churn in /tmp; keep them off the
+    # container layer so a long-lived container does not grow with every task.
+    volumes:
+      - browser-tmp:/tmp
+    security_opt: ["no-new-privileges:true"]
+    # SIGTERM must be enough time to drain a task and kill its browser tree;
+    # anything still alive after this is a SIGKILLed orphan.
+    stop_grace_period: 90s
+    depends_on:
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    deploy:
+      resources:
+        limits:
+          cpus: "${BROWSER_CPUS:-8}"
+          memory: ${BROWSER_MEMORY:-16g}
+    healthcheck:
+      # Redis + an installed browser: a missing `camoufox fetch` layer must fail
+      # the container at boot, not the first hCaptcha task hours later.
+      test: ["CMD", "python", "/usr/local/bin/captcha-healthcheck", "--redis", "--browser"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+
+  # Runs the fixture suite against the gateway every CANARY_INTERVAL_SEC and
+  # alerts on a pass-rate drop. Fixtures are read-only host files: the image
+  # does not ship tests/.
+  canary:
+    <<: *app
+    profiles: ["canary"]
+    command: ["python", "-m", "captcha.services.canary"]
+    environment:
+      <<: *env
+      CAPTCHA_GATEWAY_URL: http://gateway:8080
+      CANARY_FIXTURES_DIR: /app/tests/canary/fixtures
+      CANARY_PASS_THRESHOLD: ${CANARY_PASS_THRESHOLD:-0.9}
+      CANARY_ALERT_WEBHOOK: ${CANARY_ALERT_WEBHOOK:-}
+    volumes:
+      - ./tests/canary/fixtures:/app/tests/canary/fixtures:ro
+    depends_on:
+      gateway: {condition: service_healthy}
+
+  # TLS ingress. The only service with published ports.
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      CAPTCHA_DOMAIN: ${CAPTCHA_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging: *logging
+    depends_on:
+      gateway: {condition: service_healthy}
 
 volumes:
   redis-data:
   postgres-data:
   minio-data:
+  caddy-data:
+  caddy-config:
+  browser-tmp:
