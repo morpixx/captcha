@@ -15,6 +15,7 @@ pytest.importorskip("curl_cffi")
 
 from captcha.adapters.netguard import UrlRejectedError
 from captcha.adapters.transport import Client
+from captcha.domain.errors import CaptchaError
 
 PUBLIC = "93.184.216.34"
 
@@ -230,7 +231,7 @@ async def test_too_many_redirects_is_a_transport_error() -> None:
     )
     client = make_client(session, resolver=resolver_map(), max_redirects=1)
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(CaptchaError):
         await client.get("https://example.com/start")
 
     assert len(session.calls) == 2

@@ -5,10 +5,17 @@ the session holds a connection pool, TLS state, and cookies; sharing couples
 unrelated solver runs and gives antibot stacks a stable fingerprint to pin.
 
 Use via `async with Client(...) as c: await c.get(url)`. Safe at 1000+ parallel
-tasks as long as each task owns its own Client."""
+tasks as long as each task owns its own Client.
+
+Redirects are never delegated to curl: `request` sends with
+`allow_redirects=False` and walks the chain through `redirects.next_hop`, which
+runs `ensure_redirect` (netguard) on every `Location`. A public URL that
+redirects to loopback or cloud metadata raises `UrlRejectedError` instead of
+being fetched, and credentials are dropped when a hop changes origin."""
 
 from __future__ import annotations
 
+import asyncio
 import time
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
@@ -16,10 +23,12 @@ from urllib.parse import urlparse
 
 import structlog
 
+from captcha.adapters.netguard import ensure_public_url_async
 from captcha.domain.errors import ChallengeExpiredError, ProxyError
+from captcha.domain.redaction import safe_url
 
-from .guard import guarded_request
 from .ja_profiles import pick_impersonate
+from .redirects import next_hop, same_origin, without_credentials
 from .response import Response
 from .retry import build_retry_policy
 
@@ -175,69 +184,116 @@ class Client:
         cookies: dict[str, str] | None = None,
         timeout: float | None = None,
         allow_redirects: bool = True,
+        max_redirects: int | None = None,
         impersonate: str | None = None,
     ) -> Response:
         """Send one request. Transport flakes retry per build_retry_policy;
-        antibot statuses raise ChallengeExpiredError without retry."""
+        antibot statuses raise ChallengeExpiredError without retry.
+
+        Redirects are followed here rather than by curl: every `Location` goes
+        through `next_hop`/`ensure_redirect`, so a hop to a private address
+        raises `UrlRejectedError` instead of being fetched."""
         session = self._ensure_session()
-        policy = build_retry_policy(attempts=self.retry_attempts)
-
-        call_kwargs: dict[str, Any] = {
-            "headers": headers,
-            "params": params,
-            "data": data,
-            "json": json,
-            "cookies": cookies,
-            "timeout": timeout if timeout is not None else self.timeout,
-            "allow_redirects": allow_redirects,
-            "impersonate": impersonate or self.impersonate,
-        }
-        # drop Nones so curl_cffi uses its own defaults
-        call_kwargs = {k: v for k, v in call_kwargs.items() if v is not None}
-
         started = time.monotonic()
 
-        async for attempt in policy:
-            with attempt:
-                try:
-                    if self.allow_private:
-                        raw = await session.request(method, url, **call_kwargs)
-                    else:
-                        # Every hop goes through netguard; curl's own redirect
-                        # following would open the socket before we could look
-                        # at the Location (SSRF through a public redirector).
-                        raw = await guarded_request(
-                            session,
-                            method,
-                            url,
-                            kwargs=call_kwargs,
-                            resolver=self.resolver,
-                            max_redirects=self.max_redirects,
-                            follow=allow_redirects,
-                        )
-                except _CurlProxyError as exc:
-                    raise ProxyError(
-                        f"proxy tunnel failed: {exc}",
-                        context={"proxy": _redact_proxy(self.proxy), "url": url},
-                    ) from exc
-                except _CurlTimeout as exc:
-                    # tenacity catches TimeoutError — re-raise as builtin so it retries
-                    raise TimeoutError(str(exc)) from exc
-                except _CurlConnectionError as exc:
-                    raise ConnectionError(str(exc)) from exc
-                except _CurlRequestException as exc:
-                    # unknown curl-layer failure — surface as transport so it retries
-                    raise ConnectionError(str(exc)) from exc
+        if max_redirects is None:
+            max_redirects = self.max_redirects
+        current_url = url
+        current_method = method.upper()
+        current_params = params
+        current_data = data
+        current_json = json
+        hops = 0
 
-        elapsed_ms = (time.monotonic() - started) * 1000.0
-        resp = _wrap(raw, elapsed_ms=elapsed_ms, ja3_hint=self.impersonate)
+        if not self.allow_private:
+            # Check the first URL too, not just redirect hops; curl's own
+            # follow would open the socket before we could inspect Location.
+            current_url = await ensure_public_url_async(current_url, resolver=self.resolver, field="url")
+
+        while True:
+            call_kwargs: dict[str, Any] = {
+                "headers": headers,
+                "params": current_params,
+                "data": current_data,
+                "json": current_json,
+                "cookies": cookies,
+                "timeout": timeout if timeout is not None else self.timeout,
+                # Never let curl follow: an unchecked Location is the SSRF path.
+                "allow_redirects": False,
+                "impersonate": impersonate or self.impersonate,
+            }
+            # drop Nones so curl_cffi uses its own defaults
+            call_kwargs = {k: v for k, v in call_kwargs.items() if v is not None}
+
+            policy = build_retry_policy(attempts=self.retry_attempts)
+            async for attempt in policy:
+                with attempt:
+                    try:
+                        raw = await session.request(current_method, current_url, **call_kwargs)
+                    except _CurlProxyError as exc:
+                        raise ProxyError(
+                            f"proxy tunnel failed: {exc}",
+                            context={
+                                "proxy": _redact_proxy(self.proxy),
+                                "url": safe_url(current_url),
+                            },
+                        ) from exc
+                    except _CurlTimeout as exc:
+                        # tenacity catches TimeoutError — re-raise as builtin so it retries
+                        raise TimeoutError(str(exc)) from exc
+                    except _CurlConnectionError as exc:
+                        raise ConnectionError(str(exc)) from exc
+                    except _CurlRequestException as exc:
+                        # unknown curl-layer failure — surface as transport so it retries
+                        raise ConnectionError(str(exc)) from exc
+
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            resp = _wrap(raw, elapsed_ms=elapsed_ms, ja3_hint=self.impersonate)
+
+            if not allow_redirects:
+                break
+            hop = await asyncio.to_thread(
+                next_hop,
+                status=resp.status,
+                location=resp.header("location"),
+                base=resp.final_url or current_url,
+                method=current_method,
+                hops=hops,
+                max_hops=max_redirects,
+                resolver=self.resolver,
+            )
+            if hop is None:
+                break
+            hops += 1
+            base_url = resp.final_url or current_url
+            if not same_origin(base_url, hop.url):
+                # A redirect to another origin must not carry the caller's
+                # credentials; curl did this for Authorization on its own.
+                headers = without_credentials(headers)
+                cookies = None
+            if headers is None:
+                headers = {}
+            if not any(key.lower() == "referer" for key in headers):
+                headers = {**headers, "Referer": base_url}
+            _log.debug(
+                "transport.redirect",
+                hop=hops,
+                status=hop.status,
+                host=safe_url(hop.url),
+            )
+            current_url = hop.url
+            current_method = hop.method
+            current_params = None
+            if not hop.keep_body:
+                current_data = None
+                current_json = None
 
         if resp.status in _CHALLENGE_STATUSES:
             raise ChallengeExpiredError(
                 f"antibot verdict: HTTP {resp.status}",
                 context={
                     "status": resp.status,
-                    "url": resp.final_url,
+                    "url": safe_url(resp.final_url or current_url),
                     "method": method,
                     "ja3_hint": self.impersonate,
                     "server": resp.header("server") or "",

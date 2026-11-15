@@ -16,6 +16,7 @@ offending address, never the full URL: a `pageurl` can hold a token.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from collections.abc import Callable

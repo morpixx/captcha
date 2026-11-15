@@ -82,7 +82,11 @@ async def create_task(
     payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
     payload.pop("type", None)
     try:
-        await validate_task_urls(payload, resolver=getattr(state, "url_resolver", None))
+        await validate_task_urls(
+            payload,
+            resolver=getattr(state, "url_resolver", None),
+            callback_url=body.callback_url,
+        )
     except UrlRejectedError as exc:
         field = str(exc.context.get("field") or "url")
         _log.info("task.url_rejected", type=ct.value, field=field)

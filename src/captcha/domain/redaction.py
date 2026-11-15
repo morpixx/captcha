@@ -70,6 +70,31 @@ def redact_envelope(envelope: TaskEnvelope) -> TaskEnvelope:
     return msgspec.structs.replace(envelope, task=task)
 
 
+def safe_url(url: str | None) -> str:
+    """`scheme://host[:port]` only: no userinfo, path, query or fragment.
+
+    For log lines and error context built from URLs that may carry a token in
+    the query (`pageurl`, a challenge URL, a callback). A string that is not a
+    URL at all becomes `<unparseable>` instead of being echoed.
+    """
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(str(url))
+    except ValueError:
+        return "<unparseable>"
+    if not parts.scheme or not parts.hostname:
+        return "<unparseable>"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    hostname = parts.hostname
+    if ":" in hostname:  # IPv6 literal: keep the brackets so the line stays parseable
+        hostname = f"[{hostname}]"
+    return f"{parts.scheme}://{hostname}" + (f":{port}" if port else "")
+
+
 def redact_dsn(url: str | None) -> str:
     """A connection URL with its userinfo and query stripped, for log lines.
 
@@ -105,4 +130,5 @@ __all__ = [
     "redact_dsn",
     "redact_envelope",
     "redact_payload",
+    "safe_url",
 ]

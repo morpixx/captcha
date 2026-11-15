@@ -74,6 +74,7 @@ async def validate_task_urls(
     payload: Mapping[str, Any],
     *,
     resolver: Resolver | None = None,
+    callback_url: str | None = None,
 ) -> None:
     """Reject private/loopback/metadata targets before the task is queued.
 
@@ -88,6 +89,8 @@ async def validate_task_urls(
             continue
         await ensure_public_url_async(candidate, resolver=resolver, field=field)
         validated.add(candidate)
+    if callback_url:
+        await ensure_public_url_async(callback_url, resolver=resolver, field="callback_url")
 
 
 class CreateTaskRequest(BaseModel):
