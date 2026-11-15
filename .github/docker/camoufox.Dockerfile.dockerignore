@@ -1,0 +1,20 @@
+# Build context is the repository root (the Dockerfile copies src/ and
+# pyproject.toml). Keep the virtualenvs, caches and secrets out of it.
+.git
+.gitignore
+.env
+.env.*
+.venv
+.venv-*
+**/__pycache__
+**/*.pyc
+data
+models-cache
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+tools
+docs
+runbooks
+infra

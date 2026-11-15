@@ -177,7 +177,7 @@ python -m ml.hopscotch export --run D:/hopscotch_v2/runs/<run> ^
 | `model.safetensors` | полный serving state_dict (DINO + обучаемые блоки) |
 | `config.json` | архитектура, `encoder_chunk`, `backbone_config`, геометрия входа, эпоха |
 | `release.json` | статус, threshold, mean/scale/weights/bias, features, guards, metrics, хеш сплита |
-| `checksums.json` | sha256 всех трёх файлов |
+| `checksums.json` | sha256 всех трёх файлов (опционален для `publish`) |
 
 `config.json.input` фиксирует 200/400 px, 5 и 8 карт, hint-бокс `[0,200,135,400]`,
 `index_base: 1`. Release без калибровки экспортируется как `not_ready`: веса
@@ -196,10 +196,30 @@ python -m ml.hopscotch publish --artifact artifacts/hopscotch-v1/v1 ^
     --version v1 --cache-dir models-cache
 ~~~
 
-Раскладка бакета: `hopscotch-v1/<version>/{model.safetensors,config.json,release.json,checksums.json,meta.json}`
-и `hopscotch-v1/latest` (тело = версия). `meta.json` совместим с
-`captcha.adapters.weights.ModelMeta`, `s3_key` указывает на `model.safetensors`,
-поэтому `make check-model NAME=hopscotch-v1` проверяет sha256 без изменений.
+Публикация идёт через `Registry.publish_artifact`
+(`captcha.adapters.weights`), то есть в бакет ложится полноценный bundle-манифест:
+
+~~~text
+hopscotch-v1/<version>/model.safetensors
+hopscotch-v1/<version>/config.json
+hopscotch-v1/<version>/release.json
+hopscotch-v1/<version>/checksums.json   # опционально: экспортный чек-лист
+hopscotch-v1/<version>/meta.json        # layout=bundle, artifact, files={name: sha256}
+hopscotch-v1/latest                     # тело = версия
+~~~
+
+`meta.json`: `layout="bundle"`, `artifact="hopscotch-v1"`,
+`s3_key="hopscotch-v1/<version>/model.safetensors"`, `files` — sha256 каждого
+загруженного файла. Поэтому `make check-model NAME=hopscotch-v1` проверяет
+**каждый** файл (`Registry.check_artifact`: per-file sha256, обязательный набор,
+JSON-форма), а не только вес. `checksums.json` не обязателен: он уезжает и
+проверяется, когда есть, и получает в отчёте пометку «optional file»;
+`publish` падает на постороннем файле в каталоге артефакта, а не публикует его.
+
+`--cache-dir models-cache` материализует бандл обратно из бакета через
+`get_artifact` (round-trip по per-file sha256) в
+`<cache>/hopscotch-v1/<version>/` — именно этот каталог отдаётся солверу.
+`--dry-run` печатает ключи и per-file sha256, ничего не загружая.
 `--allow-not-ready` нужен для beta-артефакта; без него публикация `not_ready`
 запрещена. Откат — `set_latest` на предыдущую версию.
 
@@ -267,8 +287,6 @@ release.json, а не только в консоль.
 - 95/80 не достигнуто (70.5%); тип experimental, L3 canary не пройдена.
 - Release в реестре пока не опубликован: нет готового калиброванного артефакта,
   а `not_ready` публикуется только с `--allow-not-ready`.
-- `services/cli.py EXPECTED_MODELS` не содержит `hopscotch-v1` — это файл другого
-  владельца (ml-platform), нужен отдельный коммит: строка артефакта и его схема.
 - Инференс требует путь к checkout обучения; упаковка serving-бандла в образ
   (torch + `src/model`) — отдельная задача инфраструктуры.
 - Runbook по шаблону `runbooks/_template.md` не заведён отдельно: этот файл

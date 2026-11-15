@@ -13,7 +13,6 @@ from typing import Any
 
 import msgspec
 import pytest
-from conftest import release_payload, write_artifact
 from PIL import Image
 
 from captcha.domain import CaptchaType, SolveMode, SolverResult, Task
@@ -25,6 +24,7 @@ from captcha.solvers.hopscotch.calibration import Observation
 from captcha.solvers.hopscotch.solver import HopscotchSolver
 from captcha.solvers.loader import SOLVERS
 from captcha.solvers.registry import SolverRegistry
+from conftest import release_payload, write_artifact
 
 
 class FakeBackend:

@@ -4,27 +4,175 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.14"
+  UV_VERSION: "0.12.23"
 
 jobs:
+  # Lint, architecture contracts, the full unit suite (cv extras absent on
+  # purpose), scoped typing and the YAML/JS lint gates.
   checks:
+    name: checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.14"
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
 
       - name: install
         run: uv sync --extra dev
 
-      - name: lint
+      - name: ruff
         run: uv run ruff check src tests
 
       - name: architecture contracts
         run: uv run lint-imports
 
       - name: unit tests
-        # cv/browser solver tests need torch/playwright and run in a separate job later
-        run: uv run pytest -q tests/domain tests/solvers/pow
+        # No cv extra: workers must boot without it, and the cv solvers are a
+        # separate job later. tests/integration needs Redis/Postgres.
+        run: uv run pytest -q --ignore=tests/integration
+
+      - name: mypy (scoped)
+        # The pure core, storage and engines are at zero errors today; the
+        # rest of the tree is tracked separately (docs/baseline.md).
+        run: >-
+          uv run mypy
+          src/captcha/domain
+          src/captcha/application
+          src/captcha/engines
+          src/captcha/adapters/storage
+          src/captcha/adapters/netguard.py
+          src/captcha/observability/metrics.py
+
+      - name: yaml lint
+        run: |
+          uvx yamllint@1.35.1 -c .github/yamllint.yml .github/workflows tests/integration/docker-compose.yml
+          uvx --from actionlint-py actionlint
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: js syntax
+        run: |
+          for file in src/captcha/adapters/jssandbox/sidecar_node/*.js src/captcha/adapters/hcaptcha_js/*.js; do
+            node --check "$file"
+          done
+
+  # Real Redis + Postgres, real migrations, no live captcha traffic.
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: captcha
+          POSTGRES_PASSWORD: captcha
+          POSTGRES_DB: captcha_it
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U captcha -d captcha_it"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      INTEGRATION_REDIS_URL: redis://127.0.0.1:6379/15
+      INTEGRATION_POSTGRES_URL: postgresql+asyncpg://captcha:captcha@127.0.0.1:5432/captcha_it
+      # A missing service must fail the job, never skip the suite silently.
+      INTEGRATION_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: install
+        run: uv sync --extra dev
+
+      - name: integration tests
+        run: uv run pytest -q -m integration tests/integration
+
+  # Real Camoufox against a page served from 127.0.0.1. The image is built
+  # from .github/docker/camoufox.Dockerfile (Python 3.12, the browser-lane
+  # runtime) so the job does not depend on a registry image.
+  browser:
+    name: browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build camoufox image
+        run: docker build -f .github/docker/camoufox.Dockerfile -t captcha-camoufox .
+
+      - name: browser smoke (local html)
+        run: |
+          docker run --rm --shm-size=1g \
+            -v "$PWD:/work" -w /work \
+            captcha-camoufox \
+            pytest -q -m browser tests/integration/browser
+
+  # Secret scanning, dependency audit and a config/vulnerability scan.
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect \
+            --source=/repo --no-git --redact --no-banner --verbose
+
+      - name: trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: install
+        run: uv sync --extra dev
+
+      - name: pip-audit
+        run: uv run --with pip-audit pip-audit --skip-editable

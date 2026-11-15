@@ -102,6 +102,15 @@ def params_from_task(task: Task) -> Params:
         raise UnsolvableError("hcaptcha: sitekey missing", context={"task": str(task.id)})
     if not host:
         raise UnsolvableError("hcaptcha: host missing (need host or pageurl)", context={"task": str(task.id)})
+    page_host = urlparse(page_url).hostname if page_url else None
+    if page_host and page_host.lower() != host.lower():
+        # hCaptcha binds the token to the widget's host and the page context. A
+        # token minted for one origin is not accepted on another, so refuse the
+        # cross-domain request instead of returning a dead token.
+        raise UnsolvableError(
+            "hcaptcha: host/pageurl mismatch; mint and use the token on the same origin",
+            context={"host": host, "page_host": page_host, "task": str(task.id)},
+        )
     return Params(
         sitekey=sitekey,
         host=host,

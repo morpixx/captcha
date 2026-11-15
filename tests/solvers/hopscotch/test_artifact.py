@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import config_payload, release_payload, write_artifact
 from PIL import Image
 
 from captcha.domain.catalog import SolutionKind, lane_for, solution_kind
@@ -29,6 +28,7 @@ from captcha.solvers.hopscotch.artifact import (
 )
 from captcha.solvers.hopscotch.calibration import Observation, decide
 from captcha.solvers.hopscotch.payload import foot_to_pixels, parse_payload
+from conftest import config_payload, release_payload, write_artifact
 
 
 def _wave(frames: int, *, height: int = 400) -> str:
