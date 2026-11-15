@@ -1,28 +1,32 @@
 """atbCaptcha / AiSecurius — slider or 3-point click.
 
 Flow:
-  1. GET  /cap-api/v1/get?captchaId=<id>&lang=<lang>&type=<type>  -> challenge
-     -> { data: { token, pic, blockPic?, workload?, extra } }
-  2. Fetch pic(s).
-  3. Solve CV.
-  4. POST /cap-api/v1/check  Body: { token, data: AES(payload), captchaId }
-     -> { success: true, data: { captchaVerification: "<signed>" } }
+  1. GET  /cap-api/v1/get?captchaId=<id>&lang=&type=      -> { data: { token, pic, blockPic } }
+  2. GET  <pic> (+ <blockPic>)                            -> images
+  3. CV slider / click in-process
+  4. seal the answer into `data`
+  5. POST /cap-api/v1/check {captchaId, token, data, ts}  -> data.captchaVerification
 
-The site then forwards `captchaVerification` to its own backend.
+Step 4 is the vendor's SDK: AES-GCM over the answer under a per-session key the
+page derives from `token` and the runtime fingerprint. The solver takes a
+sealer from `ctx.extra["atb_sealer"]` and escalates with NeedsBrowserError
+otherwise — posting plaintext would get the round rejected as a wrong answer.
 """
 
 from __future__ import annotations
 
+import inspect
 import time
 from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
-from captcha.domain.errors import CaptchaError, UnsolvableError
+from captcha.domain.errors import ConfigError, NeedsBrowserError, UnsolvableError
 from captcha.solvers.base import SolverContext, SolverInfo
 from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
+from . import browser, wire
 from . import endpoints as ep
 
 
@@ -32,93 +36,80 @@ class AtbCaptchaSolver(InteractiveBase):
         name="atbcaptcha",
         types=(CaptchaType.ATBCAPTCHA,),
         http=True,
-
-        needs_js_runtime=True,  # AES key is wrapped by a JS-only routine
+        browser=True,
+        needs_js_runtime=True,  # the answer is SDK-sealed
         experimental=True,
     )
 
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
         self._require(task.payload, "captcha_id")
         if ctx.http is None:
-            raise UnsolvableError("atbcaptcha solver requires ctx.http", context={})
-        cid: str = str(task.payload["captcha_id"])
-        start = time.monotonic()
+            raise ConfigError("atbcaptcha solver requires ctx.http", context={"type": task.type.value})
 
-        params: dict[str, Any] = {
-            "captchaId": cid,
-            "lang": task.language or "en",
-            # FILL: `type` — numeric per vendor (slider=1, 3-click=2, text=3, rotate=4).
-            "type": task.payload.get("ctype", 1),
-            "ts": int(time.time() * 1000),
-        }
-        r = await ctx.http.get(ep.GET_CONF, params=params)
-        try:
-            data = (r.json() or {}).get("data") or {}
-        except Exception as exc:
-            raise CaptchaError("atbcaptcha get not JSON", context={"status": r.status}) from exc
-        token = data.get("token")
-        pic = data.get("pic")
-        block = data.get("blockPic")
-        if not (token and pic):
-            raise CaptchaError(
-                "atbcaptcha get missing fields — see runbooks/atbcaptcha.md",
-                context={"keys": sorted(data.keys())},
-            )
-        bg = await ctx.http.get(pic)
-        piece_b = await ctx.http.get(block) if block else None
-        cv_kind = CaptchaType.SLIDER if block else CaptchaType.CLICK
+        captcha_id = str(task.payload["captcha_id"])
+        type_ = int(task.payload.get("ctype") or ep.TYPE_SLIDER)
+        started = time.monotonic()
+
+        reply = await ctx.http.get(ep.GET_CONF, params=self._get_params(task, captcha_id, type_))
+        challenge = wire.parse_challenge(wire.parse_reply(reply.text))
+
+        bg = await ctx.http.get(challenge["pic"])
+        block = await ctx.http.get(challenge["block"]) if challenge["block"] else None
         cv_payload: dict[str, Any] = {"bg": bg.body}
-        if piece_b is not None:
-            cv_payload["piece"] = piece_b.body
-        cv = await self._solve_cv(cv_kind, task, ctx, cv_payload)
+        if block is not None:
+            cv_payload["piece"] = block.body
+        cv = await self._solve_cv(challenge["kind"], task, ctx, cv_payload)
 
-        # FILL: encrypt `payload` with the per-session AES key the SDK derives
-        # from `token` + user fingerprint. Current stub sends plaintext so the
-        # verify fails with an obvious schema error, not a silent success.
-        verify_body = {
-            "captchaId": cid,
-            "token": token,
-            "data": _encode_answer(cv, cv_kind),
-            "point": _format_point(cv, cv_kind),
-            "ts": int(time.time() * 1000),
-        }
-        vr = await ctx.http.post(ep.VERIFY, json=verify_body)
-        try:
-            vdata = vr.json() or {}
-        except Exception as exc:
-            raise CaptchaError("atbcaptcha check not JSON", context={"status": vr.status}) from exc
-        if not vdata.get("success"):
-            raise CaptchaError(
-                "atbcaptcha check rejected",
-                context={"code": vdata.get("code"), "msg": vdata.get("msg")},
-            )
-        verification = (vdata.get("data") or {}).get("captchaVerification")
-        if not verification:
-            raise CaptchaError(
-                "atbcaptcha check missing captchaVerification — see runbooks/atbcaptcha.md",
-                context={"vdata_keys": sorted(vdata.keys())},
-            )
+        plain = wire.answer_plaintext(cv, challenge["kind"], started=started)
+        sealed = await _seal(ctx, {"plain": plain, "token": challenge["token"], "type": type_})
+        body = wire.check_body(captcha_id, challenge["token"], sealed, type_=type_)
+        checked = wire.parse_reply((await ctx.http.post(ep.VERIFY, json=body)).text)
+        verification = wire.parse_check(checked)
+
         return SolverResult(
             token=verification,
-            extra={"captcha_id": cid, "cv_kind": cv_kind.value},
+            extra={"captcha_id": captcha_id, "cv_kind": challenge["kind"].value},
             solve_mode=SolveMode.HTTP,
-            latency_ms=(time.monotonic() - start) * 1000.0,
+            latency_ms=(time.monotonic() - started) * 1000.0,
         )
 
+    async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
+        return await browser.solve(task, ctx, solver=self)
 
-def _format_point(cv: SolverResult, kind: CaptchaType) -> str:
-    if kind == CaptchaType.SLIDER:
-        return f"{int(cv.offset or 0)},5"
-    return ",".join(f"{int(x)},{int(y)}" for (x, y) in (cv.coords or []))
+    def _get_params(self, task: Task, captcha_id: str, type_: int) -> dict[str, Any]:
+        return {
+            "captchaId": captcha_id,
+            "lang": str(task.language or task.payload.get("lang") or "en"),
+            "type": type_,
+            "ts": int(time.time() * 1000),
+        }
 
 
-def _encode_answer(cv: SolverResult, kind: CaptchaType) -> str:
-    """Plaintext stub — vendor expects AES-wrap; FILL that in."""
-    import base64
-    import json
+async def _seal(ctx: SolverContext, envelope: dict[str, Any]) -> str:
+    """Seal the answer with the wired SDK sealer, or ask for the browser lane.
 
-    if kind == CaptchaType.SLIDER:
-        obj = {"x": int(cv.offset or 0), "t": int(time.time() * 1000)}
-    else:
-        obj = {"pts": [[int(x), int(y)] for (x, y) in (cv.coords or [])]}
-    return base64.b64encode(json.dumps(obj, separators=(",", ":")).encode()).decode()
+    The sealer is an async callable (or an object with `seal()`) receiving
+    `{plain, token, type}` and returning the `data` string.
+    """
+    extra = ctx.extra if isinstance(ctx.extra, dict) else {}
+    sealer = extra.get(ep.SEALER_KEY)
+    if sealer is None:
+        raise NeedsBrowserError(
+            "atbcaptcha: the sealed answer needs the vendor SDK in a browser",
+            context={
+                "artifact": "data",
+                "hint": f"wire ctx.extra['{ep.SEALER_KEY}'] or route the task to the browser lane",
+            },
+        )
+    call = getattr(sealer, "seal", sealer)
+    sealed = call(envelope)
+    if inspect.isawaitable(sealed):
+        sealed = await sealed
+    if isinstance(sealed, dict):
+        sealed = sealed.get("data")
+    if not isinstance(sealed, str) or not sealed:
+        raise UnsolvableError(
+            "atbcaptcha sealer returned an empty data field",
+            context={"type": type(sealed).__name__},
+        )
+    return sealed
