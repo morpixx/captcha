@@ -3,7 +3,7 @@
 Simple grid, narrow vocab (consumer-goods photos — shoes, bags, clothing),
 decent lighting and no occluders. Easiest head of the five.
 
-Default head: `shein-v1`.
+Default head: shein-v1 (3x3).
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from captcha.domain import CaptchaType
 from captcha.solvers import SolverInfo
 
 from .base_grid import GridClassifier
+from .grid import HEADS
 
 
 class SheinSolver(GridClassifier):
@@ -26,6 +27,4 @@ class SheinSolver(GridClassifier):
         version="0.1.0",
     )
 
-    default_head_name = "shein-v1"
-    default_rows = 3
-    default_cols = 3
+    head = HEADS["shein-v1"]
