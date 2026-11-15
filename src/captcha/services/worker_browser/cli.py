@@ -1,24 +1,30 @@
 """CLI entry point for the browser-lane worker.
 
-One `captcha.adapters.browser.Pool` is launched here and shared across all consumers
-in this process. `--consumers` > 1 is still useful for XREADGROUP parallelism
-even when the pool caps real concurrency.
+The provider is resolved once per process (`resolve_provider`) and shared by
+every consumer; there is no process-wide Playwright context pool any more.
+Each task opens its own session through `ctx.browser`, so several consumers
+share a bounded factory instead of a bound context.
+
+Consumer processes are capped at `WORKER_BROWSER_SESSIONS`: more consumers than
+sessions would only oversubscribe the same RAM budget.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 
 import structlog
 
-from captcha.adapters.browser import Pool as BrowserPool
 from captcha.config import get_settings
 from captcha.observability import setup_logging, setup_metrics
 
-from .worker import DEFAULT_CONCURRENCY, LANE, Worker
+from .limits import DEFAULT_CONCURRENCY, LANE
+from .provider import close_provider, resolve_provider, start_provider
+from .worker import Worker
 
 
 def _install_loop_policy() -> str:
@@ -42,19 +48,19 @@ def _install_loop_policy() -> str:
 def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="captcha-worker-browser",
-        description=f"{LANE}-lane captcha worker (playwright/camoufox fallback)",
+        description=f"{LANE}-lane captcha worker (per-task browser sessions)",
     )
     p.add_argument(
         "--consumers",
         type=int,
         default=int(os.environ.get("WORKER_BROWSER_CONSUMERS", "1")),
-        help="parallel XREADGROUP consumers sharing the browser pool",
+        help="parallel XREADGROUP consumers sharing one provider (capped by sessions)",
     )
     p.add_argument(
         "--concurrency",
         type=int,
         default=None,
-        help="in-flight cap per consumer (defaults to WORKER_BROWSER_SESSIONS)",
+        help="in-flight cap per consumer (defaults to sessions / consumers)",
     )
     p.add_argument(
         "--batch-size",
@@ -97,33 +103,39 @@ async def _amain(args: argparse.Namespace) -> int:
     loop_name = _install_loop_policy()
     log.info("loop.installed", policy=loop_name)
 
-    pool_size = settings.worker_browser_sessions or DEFAULT_CONCURRENCY
+    sessions = int(settings.worker_browser_sessions or DEFAULT_CONCURRENCY)
+    consumers = max(1, min(args.consumers, sessions))
+    per_consumer = args.concurrency or max(1, sessions // consumers)
     log.info(
         "config.loaded",
-        consumers=args.consumers,
-        concurrency=args.concurrency or pool_size,
-        pool_size=pool_size,
+        consumers=consumers,
+        concurrency=per_consumer,
+        sessions=sessions,
         headless=args.headless,
+        min_free_mb=settings.worker_browser_min_free_mb,
         redis_prefix=settings.redis_stream_prefix,
     )
 
-    # Shared browser pool across consumers — launch once, teardown once.
-    browser = BrowserPool(size=pool_size, headless=args.headless)
-    await browser.launch()
-    log.info("browser.pool.launched", size=browser.size, headless=args.headless)
+    provider = resolve_provider(settings, headless=args.headless)
+    await start_provider(provider)
+    log.info(
+        "browser.provider.ready",
+        provider=type(provider).__name__,
+        sessions=sessions,
+    )
 
     workers: list[Worker] = [
         Worker(
             settings,
             worker_id=f"{args.worker_id_prefix}-{i}",
-            concurrency=args.concurrency or pool_size,
+            concurrency=per_consumer,
             batch_size=args.batch_size,
             block_ms=args.block_ms,
             max_retries=args.max_retries,
             headless=args.headless,
-            browser_pool=browser,
+            provider=provider,
         )
-        for i in range(args.consumers)
+        for i in range(consumers)
     ]
 
     try:
@@ -131,10 +143,8 @@ async def _amain(args: argparse.Namespace) -> int:
     except asyncio.CancelledError:
         pass
     finally:
-        try:
-            await browser.close_all()
-        except Exception as exc:
-            log.warning("browser.pool.close_failed", error=str(exc))
+        with contextlib.suppress(Exception):
+            await close_provider(provider)
     return 0
 
 

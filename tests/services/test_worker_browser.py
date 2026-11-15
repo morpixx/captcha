@@ -1,0 +1,600 @@
+"""Browser-lane worker tests: fake provider, fake solver, fake consumer.
+
+No Redis, no Postgres, no browser, no live captcha. Everything the worker touches
+is injected, which is exactly the seam the production wiring uses.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from uuid import uuid4
+
+import pytest
+
+from captcha.domain import CaptchaError, SolveMode, SolverResult, Task, TaskEnvelope, UnsolvableError
+from captcha.domain.enums import CaptchaType
+from captcha.services.worker_browser.gate import ConcurrencyGate
+from captcha.services.worker_browser.heartbeat import (
+    LaneHeartbeat,
+    cap_key,
+    lane_key,
+)
+from captcha.services.worker_browser.limits import DEFAULT_CONCURRENCY, MAX_TIMEOUT_SEC, MIN_TIMEOUT_SEC, clamp_timeout
+from captcha.services.worker_browser.provider import PoolProvider, resolve_provider
+from captcha.services.worker_browser.supervisor import ProcessSupervisor, TrackingProvider
+from captcha.services.worker_browser.worker import Worker
+from captcha.solvers import Solver, SolverContext, SolverInfo, SolverRegistry
+
+# ---------------------------------------------------------------- fixtures
+
+
+def settings_for(tmp_path: Path, **overrides: Any) -> SimpleNamespace:
+    values: dict[str, Any] = {
+        "redis_url": "redis://localhost:6379/0",
+        "redis_stream_prefix": "captcha",
+        "worker_browser_sessions": 2,
+        "worker_browser_headless": True,
+        "worker_browser_min_free_mb": 0,
+        "worker_browser_task_timeout_sec": 240,
+        "worker_browser_ramp_start": 2,
+        "proxy_pool_file": str(tmp_path / "no-pool.txt"),
+        "log_level": "INFO",
+        "log_json": False,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def envelope(
+    *,
+    task_type: CaptchaType = CaptchaType.HCAPTCHA,
+    deadline_ts: float | None = None,
+) -> TaskEnvelope:
+    task = Task(
+        id=uuid4(),
+        type=task_type,
+        payload={"sitekey": "site-key"},
+        preferred_mode=SolveMode.BROWSER,
+        created_at=time.time(),
+        deadline_ts=deadline_ts,
+    )
+    return TaskEnvelope(task=task)
+
+
+class FakeSession:
+    def __init__(self, pid: int | None = None) -> None:
+        self.pid = pid
+        self.closed = False
+
+
+class FakeProvider:
+    """Provider stub: counts opens/closes and peak concurrency."""
+
+    def __init__(self, *, session_pid: int | None = None, delay: float = 0.0) -> None:
+        self.session_pid = session_pid
+        self.delay = delay
+        self.opened = 0
+        self.closed = 0
+        self.peak = 0
+        self._active = 0
+
+    @contextlib.asynccontextmanager
+    async def session(self, spec: Any = None):
+        self.opened += 1
+        self._active += 1
+        self.peak = max(self.peak, self._active)
+        session = FakeSession(pid=self.session_pid)
+        try:
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            yield session
+        finally:
+            self._active -= 1
+            session.closed = True
+            self.closed += 1
+
+
+def solver_class(
+    *,
+    delay: float = 0.0,
+    error: BaseException | None = None,
+    open_session: bool = True,
+    types: tuple[CaptchaType, ...] = (CaptchaType.HCAPTCHA,),
+    name: str = "fake-browser",
+) -> type[Solver]:
+    class _FakeSolver(Solver):
+        info = SolverInfo(name=name, types=types, http=False, browser=True)
+
+        async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
+            raise AssertionError("solve_http must never run on the browser lane")
+
+        async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
+            if open_session and ctx.browser is not None:
+                async with ctx.browser.session(SimpleNamespace(label=str(task.id))) as _session:
+                    if delay:
+                        await asyncio.sleep(delay)
+                    if error is not None:
+                        raise error
+            elif delay:
+                await asyncio.sleep(delay)
+            if error is not None:
+                raise error
+            return SolverResult(token="solved-token")
+
+    return _FakeSolver
+
+
+class FakeConsumer:
+    def __init__(self, batches: list[list[tuple[str, TaskEnvelope]]], *, dead_on_fail: bool = False) -> None:
+        self._batches = [list(batch) for batch in batches]
+        self.dead_on_fail = dead_on_fail
+        self.acked: list[str] = []
+        self.failed: list[tuple[str, str, int]] = []
+        self.expected = sum(len(batch) for batch in batches)
+        self.done = asyncio.Event()
+
+    def _settle(self) -> None:
+        if len(self.acked) + len(self.failed) >= self.expected:
+            self.done.set()
+
+    async def read(self) -> list[tuple[str, TaskEnvelope]]:
+        if self._batches:
+            return self._batches.pop(0)
+        await asyncio.sleep(0.01)
+        return []
+
+    async def ack(self, message_id: str) -> None:
+        self.acked.append(message_id)
+        self._settle()
+
+    async def fail(self, message_id: str, envelope: TaskEnvelope, reason: str) -> bool:
+        self.failed.append((message_id, reason, envelope.retries))
+        self._settle()
+        return self.dead_on_fail
+
+
+class FakeState:
+    def __init__(self) -> None:
+        self.processing: list[tuple[Any, str]] = []
+        self.ready: list[tuple[Any, SolverResult]] = []
+        self.failed: list[tuple[Any, dict[str, Any]]] = []
+
+    async def set_processing(self, task_id: Any, worker_id: str, *, started_at: float) -> None:
+        self.processing.append((task_id, worker_id))
+
+    async def set_ready(self, task_id: Any, result: SolverResult, *, finished_at: float) -> None:
+        self.ready.append((task_id, result))
+
+    async def set_failed(self, task_id: Any, error: dict[str, Any], *, finished_at: float) -> None:
+        self.failed.append((task_id, error))
+
+
+class FakeHeartbeat:
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self.types: tuple[Any, ...] = ()
+
+    def set_types(self, types: Any) -> None:
+        self.types = tuple(types)
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+class FakeSupervisor:
+    def __init__(self) -> None:
+        self.killed_labels: list[str] = []
+        self.kill_all_calls = 0
+        self.reaped = 0
+
+    def track(self, label: str, pid: int) -> None:  # pragma: no cover - unused
+        pass
+
+    def forget_pid(self, label: str, pid: int) -> None:  # pragma: no cover - unused
+        pass
+
+    async def kill_label(self, label: str) -> int:
+        self.killed_labels.append(label)
+        return 1
+
+    async def kill_all(self) -> int:
+        self.kill_all_calls += 1
+        return 0
+
+    def reap_profiles(self) -> int:
+        self.reaped += 1
+        return 0
+
+
+def build_worker(
+    tmp_path: Path,
+    *,
+    solver: type[Solver] | None,
+    batches: list[list[tuple[str, TaskEnvelope]]],
+    provider: Any = None,
+    supervisor: Any = None,
+    gate: ConcurrencyGate | None = None,
+    timeout_sec: float | None = None,
+    concurrency: int = 2,
+    dead_on_fail: bool = False,
+) -> tuple[Worker, FakeConsumer, FakeState, FakeHeartbeat, Any]:
+    registry = SolverRegistry()
+    if solver is not None:
+        registry.register(solver)
+    consumer = FakeConsumer(batches, dead_on_fail=dead_on_fail)
+    state = FakeState()
+    heartbeat = FakeHeartbeat()
+    provider = provider if provider is not None else FakeProvider()
+    worker = Worker(
+        settings_for(tmp_path),
+        worker_id="browser-w1",
+        concurrency=concurrency,
+        provider=provider,
+        registry=registry,
+        consumer=consumer,
+        state=state,
+        heartbeat=heartbeat,
+        gate=gate,
+        supervisor=supervisor if supervisor is not None else FakeSupervisor(),
+        timeout_sec=timeout_sec,
+        install_signals=False,
+    )
+    return worker, consumer, state, heartbeat, provider
+
+
+async def drive(worker: Worker, consumer: FakeConsumer, *, timeout: float = 5.0) -> None:
+    run_task = asyncio.create_task(worker.run())
+    await asyncio.wait_for(consumer.done.wait(), timeout)
+    worker.request_stop()
+    await asyncio.wait_for(run_task, timeout)
+
+
+async def wait_until(predicate: Any, *, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met in time")
+        await asyncio.sleep(0.01)
+
+
+# ---------------------------------------------------------------- worker
+
+
+async def test_success_marks_ready_and_closes_session(tmp_path: Path) -> None:
+    env = envelope()
+    worker, consumer, state, heartbeat, provider = build_worker(
+        tmp_path,
+        solver=solver_class(),
+        batches=[[(("1-0"), env)]],
+    )
+    await drive(worker, consumer)
+
+    assert consumer.acked == ["1-0"]
+    assert consumer.failed == []
+    assert len(state.ready) == 1
+    task_id, result = state.ready[0]
+    assert task_id == env.task.id
+    assert result.token == "solved-token"
+    assert result.solve_mode == SolveMode.BROWSER
+    assert provider.opened == 1 and provider.closed == 1
+    assert heartbeat.started and heartbeat.stopped
+
+
+async def test_solver_sees_tracking_provider_and_caps(tmp_path: Path) -> None:
+    seen: list[Any] = []
+
+    class _Probe(solver_class()):  # type: ignore[misc, valid-type]
+        async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
+            seen.append(ctx.browser)
+            return SolverResult(token="t")
+
+    env = envelope()
+    worker, consumer, state, _hb, _provider = build_worker(
+        tmp_path, solver=_Probe, batches=[[("1-0", env)]]
+    )
+    await drive(worker, consumer)
+
+    assert isinstance(seen[0], TrackingProvider)
+    assert state.ready and state.ready[0][1].token == "t"
+
+
+async def test_missing_solver_is_terminal_unsolvable(tmp_path: Path) -> None:
+    env = envelope(task_type=CaptchaType.RECAPTCHA_V2)
+    worker, consumer, state, _hb, _provider = build_worker(
+        tmp_path,
+        solver=solver_class(types=(CaptchaType.HCAPTCHA,)),
+        batches=[[("2-0", env)]],
+    )
+    await drive(worker, consumer)
+
+    assert consumer.acked == ["2-0"]
+    assert consumer.failed == []
+    assert len(state.failed) == 1
+    assert state.failed[0][1]["code"] == UnsolvableError.code
+
+
+async def test_hard_timeout_kills_tree_and_releases_slot(tmp_path: Path) -> None:
+    supervisor = FakeSupervisor()
+    env = envelope()
+    worker, consumer, state, _hb, _provider = build_worker(
+        tmp_path,
+        solver=solver_class(delay=30.0),
+        batches=[[("3-0", env)]],
+        supervisor=supervisor,
+        timeout_sec=0.15,
+    )
+    started = time.monotonic()
+    await drive(worker, consumer, timeout=10.0)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0, "hard timeout must not wait for the solver"
+    assert consumer.acked == ["3-0"] or consumer.acked == []
+    assert consumer.failed and consumer.failed[0][1] == "ERR_TIMEOUT"
+    assert supervisor.killed_labels, "process tree kill must run on timeout"
+    assert worker._gate is not None and worker._gate.active == 0
+    # Retry path: state stays 'processing' until the consumer dead-letters.
+    assert state.failed == []
+
+
+async def test_timeout_dead_letter_sets_err_timeout(tmp_path: Path) -> None:
+    env = envelope()
+    worker, consumer, state, _hb, _provider = build_worker(
+        tmp_path,
+        solver=solver_class(delay=30.0),
+        batches=[[("4-0", env)]],
+        timeout_sec=0.1,
+        dead_on_fail=True,
+    )
+    await drive(worker, consumer, timeout=10.0)
+
+    assert len(state.failed) == 1
+    assert state.failed[0][1]["code"] == "ERR_TIMEOUT"
+
+
+async def test_needs_browser_in_browser_lane_is_terminal(tmp_path: Path) -> None:
+    class _NeedsBrowser(CaptchaError):
+        code = "ERR_NEEDS_BROWSER"
+
+    env = envelope()
+    worker, consumer, state, _hb, _provider = build_worker(
+        tmp_path,
+        solver=solver_class(error=_NeedsBrowser("ask http again")),
+        batches=[[("5-0", env)]],
+    )
+    await drive(worker, consumer)
+
+    assert consumer.acked == ["5-0"]
+    assert consumer.failed == []
+    assert state.failed[0][1]["code"] == "ERR_UNSOLVABLE"
+
+
+async def test_drain_finishes_inflight_before_shutdown(tmp_path: Path) -> None:
+    first, second = envelope(), envelope()
+    provider = FakeProvider()
+    worker, consumer, state, _hb, _provider = build_worker(
+        tmp_path,
+        solver=solver_class(delay=0.1),
+        batches=[[("6-0", first), ("6-1", second)]],
+        provider=provider,
+        concurrency=2,
+    )
+    run_task = asyncio.create_task(worker.run())
+    await wait_until(lambda: provider.opened == 2)
+    worker.request_stop()
+    await asyncio.wait_for(run_task, timeout=10.0)
+
+    assert {tid for tid, _ in state.ready} == {first.task.id, second.task.id}
+    assert consumer.acked == ["6-0", "6-1"]
+    assert provider.closed == 2
+    assert provider._active == 0
+
+
+async def test_concurrency_capped_by_sessions(tmp_path: Path) -> None:
+    batches = [[(f"7-{i}", envelope())] for i in range(6)]
+    provider = FakeProvider()
+    worker, consumer, state, _hb, _provider = build_worker(
+        tmp_path,
+        solver=solver_class(delay=0.05),
+        batches=batches,
+        provider=provider,
+        concurrency=2,
+    )
+    await drive(worker, consumer, timeout=10.0)
+
+    assert len(state.ready) == 6
+    assert provider.peak <= 2, f"peak sessions {provider.peak} exceeded cap 2"
+
+
+# ---------------------------------------------------------------- gate
+
+
+async def test_gate_ramps_up_after_clean_completions() -> None:
+    gate = ConcurrencyGate(4, ramp_start=1, ramp_every=2, min_free_mb=0)
+
+    assert gate.limit == 1
+    assert await gate.acquire() is True
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(gate.acquire(), timeout=0.05)
+
+    gate.release(ok=True)
+    gate.release(ok=True)
+    await asyncio.sleep(0)
+    assert gate.limit == 2
+    assert await gate.acquire() is True
+    assert await gate.acquire() is True
+
+
+async def test_gate_memory_guard_and_stop() -> None:
+    gate = ConcurrencyGate(2, ramp_start=2, min_free_mb=2048, free_mb_fn=lambda: 128)
+    stop = asyncio.Event()
+
+    assert gate.memory_ok() is False
+    assert gate.snapshot()["free_mb"] == 128
+    assert await gate.acquire(stop=stop) is True  # slot taken, then RAM turns us away
+    gate.release(ok=False)
+    stop.set()
+    assert await gate.wait_for_memory(stop=stop) is False
+    assert await gate.acquire(stop=stop) is False
+
+
+# ---------------------------------------------------------------- heartbeat
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.sets: list[tuple[str, Any, int | None]] = []
+        self.sadds: list[tuple[str, tuple[Any, ...]]] = []
+        self.deleted: list[str] = []
+
+    async def set(self, key: str, value: Any, ex: int | None = None) -> None:
+        self.sets.append((key, value, ex))
+
+    async def sadd(self, key: str, *values: Any) -> None:
+        self.sadds.append((key, values))
+
+    async def delete(self, key: str) -> None:
+        self.deleted.append(key)
+
+
+async def test_heartbeat_sets_lease_and_capabilities() -> None:
+    redis = FakeRedis()
+    beat = LaneHeartbeat(
+        redis,
+        worker_id="browser-w1",
+        prefix="captcha",
+        types=(CaptchaType.HCAPTCHA, CaptchaType.RECAPTCHA_V2),
+        interval_sec=3600,
+    )
+
+    assert await beat.beat() is True
+    assert redis.sets == [(lane_key("captcha", "browser", "browser-w1"), "1", 90)]
+    assert redis.sadds == [
+        (cap_key("captcha", "browser"), ("hcaptcha", "recaptcha_v2")),
+    ]
+
+    await beat.start()
+    await beat.stop()
+    assert beat.lane_key in redis.deleted
+
+
+# ---------------------------------------------------------------- supervisor
+
+
+async def test_supervisor_kills_child_process(tmp_path: Path) -> None:
+    proc = subprocess.Popen(  # noqa: S603 - fixed argv, our own interpreter
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    supervisor = ProcessSupervisor(profile_root=tmp_path)
+    supervisor.track("task-1", proc.pid)
+    try:
+        killed = await supervisor.kill_label("task-1")
+        assert killed >= 1
+        proc.wait(timeout=10)
+        assert proc.poll() is not None
+    finally:
+        if proc.poll() is None:  # pragma: no cover - safety net
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+def test_supervisor_reaps_stale_profiles(tmp_path: Path) -> None:
+    stale = tmp_path / "captcha-browser-old"
+    stale.mkdir()
+    (stale / "cookies.sqlite").write_text("x")
+    old = time.time() - 7200
+    os.utime(stale, (old, old))
+
+    fresh = tmp_path / "captcha-browser-fresh"
+    fresh.mkdir()
+
+    supervisor = ProcessSupervisor(profile_root=tmp_path, profile_ttl_sec=3600)
+    assert supervisor.reap_profiles() == 1
+    assert not stale.exists()
+    assert fresh.exists()
+
+
+# ---------------------------------------------------------------- provider
+
+
+async def test_pool_provider_never_reuses_a_context(tmp_path: Path) -> None:
+    class FakeContext:
+        def __init__(self) -> None:
+            self.cookies: list[dict[str, Any]] = []
+
+        async def add_cookies(self, cookies: list[dict[str, Any]]) -> None:
+            self.cookies.extend(cookies)
+
+    class FakePool:
+        size = 2
+
+        def __init__(self) -> None:
+            self.configs: list[Any] = []
+            self.contexts: list[FakeContext] = []
+            self.launched = False
+            self.closed = False
+
+        async def launch(self) -> None:
+            self.launched = True
+
+        async def close_all(self) -> None:
+            self.closed = True
+
+        @contextlib.asynccontextmanager
+        async def acquire(self, cfg: Any = None):
+            self.configs.append(cfg)
+            context = FakeContext()
+            self.contexts.append(context)
+            yield SimpleNamespace(context=context)
+
+    pool = FakePool()
+    provider = PoolProvider(pool, headless=True)
+    await provider.start()
+    spec = SimpleNamespace(
+        proxy="http://user:pass@10.0.0.1:8080",
+        cookies=[{"name": "a", "value": "b"}, "not-a-cookie"],
+        user_agent="UA/1.0",
+        locale="de-DE",
+        timezone="Europe/Berlin",
+        headless=True,
+        label="label-1",
+    )
+
+    async with provider.session(spec) as _session:
+        pass
+    async with provider.session(None) as _session:
+        pass
+    await provider.aclose()
+
+    assert pool.launched and pool.closed
+    assert [cfg.max_uses for cfg in pool.configs] == [1, 1]
+    first = pool.configs[0]
+    assert first.proxy == "http://user:pass@10.0.0.1:8080"
+    assert first.locale == "de-DE" and first.timezone == "Europe/Berlin"
+    assert first.user_agent == "UA/1.0"
+    assert pool.contexts[0].cookies == [{"name": "a", "value": "b"}]
+
+
+def test_resolve_provider_prefers_explicit_instance() -> None:
+    sentinel = object()
+    assert resolve_provider(SimpleNamespace(), provider=sentinel) is sentinel
+
+
+def test_contract_defaults_and_timeout_window() -> None:
+    assert DEFAULT_CONCURRENCY == 12
+    assert clamp_timeout(10) == MIN_TIMEOUT_SEC
+    assert clamp_timeout(1000) == MAX_TIMEOUT_SEC
+    assert clamp_timeout(240) == 240
