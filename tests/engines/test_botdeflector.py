@@ -8,8 +8,6 @@ contract instead: deterministic bytes, UA required, client capture wins.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from captcha.domain.enums import AntibotEngine
@@ -97,14 +95,18 @@ def test_a_non_hex_challenge_is_refused() -> None:
 # --- fingerprint -------------------------------------------------------------
 
 
-async def test_the_fingerprint_header_is_deterministic_and_complete() -> None:
+async def test_the_visitor_id_is_deterministic_and_complete() -> None:
     builder = BotDeflectorBuilder()
 
     first = await builder.build(make_ctx())
     second = await builder.build(make_ctx())
 
-    assert first["headers"][HEADER_FINGERPRINT] == second["headers"][HEADER_FINGERPRINT]
-    blob = json.loads(first["headers"][HEADER_FINGERPRINT])
+    visitor = first["headers"][HEADER_FINGERPRINT]
+    assert visitor == second["headers"][HEADER_FINGERPRINT]
+    assert visitor == first["visitor_id"]
+    assert len(visitor) == 32 and all(char in "0123456789abcdef" for char in visitor)
+
+    blob = first["fingerprint"]
     assert blob["userAgent"] == UA
     assert blob["language"] == "en-US"
     assert blob["platform"] == "Win32"
@@ -113,14 +115,35 @@ async def test_the_fingerprint_header_is_deterministic_and_complete() -> None:
 
 
 async def test_a_client_capture_wins_over_profile_defaults() -> None:
-    provided = {"userAgent": "Mozilla/5.0 custom", "screen": {"width": 1280, "height": 720}, "timezone": "Europe/Berlin"}
+    provided = {
+        "userAgent": "Mozilla/5.0 custom",
+        "screen": {"width": 1280, "height": 720},
+        "timezone": "Europe/Berlin",
+    }
 
     plan = await BotDeflectorBuilder().build(make_ctx(fingerprint=provided))
 
-    blob = json.loads(plan["headers"][HEADER_FINGERPRINT])
-    assert blob["userAgent"] == "Mozilla/5.0 custom"
-    assert blob["screen"] == {"width": 1280, "height": 720}
-    assert blob["timezone"] == "Europe/Berlin"
+    assert plan["fingerprint"]["userAgent"] == "Mozilla/5.0 custom"
+    assert plan["fingerprint"]["screen"] == {"width": 1280, "height": 720}
+    assert plan["fingerprint"]["timezone"] == "Europe/Berlin"
+
+
+async def test_an_explicit_visitor_id_is_used_verbatim() -> None:
+    plan = await BotDeflectorBuilder().build(make_ctx(visitor_id=" 421DFFD594FD3062ABF1F8852B99448D "))
+
+    assert plan["visitor_id"] == "421dffd594fd3062abf1f8852b99448d"
+    assert plan["headers"][HEADER_FINGERPRINT] == plan["visitor_id"]
+
+
+async def test_a_capture_visitor_id_in_the_fingerprint_blob_wins() -> None:
+    plan = await BotDeflectorBuilder().build(make_ctx(fingerprint={"visitorId": "0" * 32}))
+
+    assert plan["visitor_id"] == "0" * 32
+
+
+async def test_a_malformed_visitor_id_is_a_sensor_error() -> None:
+    with pytest.raises(SensorError):
+        await BotDeflectorBuilder().build(make_ctx(visitor_id="not-a-visitor-id"))
 
 
 async def test_no_user_agent_is_a_sensor_error() -> None:

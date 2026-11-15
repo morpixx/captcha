@@ -2,9 +2,10 @@
 
 BotDeflector is Queue-it's challenge wall (botdeflector.eu). The invisible
 step is a proof of work; the widget also fingerprints the browser with
-FingerprintJS and sends that blob on every pow/icon call. This builder owns
-the fingerprint half and the wire names around it; the PoW lives in pow.py
-and the HTTP flow lives in the solver.
+FingerprintJS and sends the 32-hex visitor id on every flow: as
+solution_fingerprint in the pow/icon bodies and as x-tt-client-fingerprint on
+/verify-flow (2026-10 capture). This builder owns that identifier and the wire
+names around it; the PoW lives in pow.py and the HTTP flow lives in the solver.
 
 The flow token (botDeflectorJwtToken) is captured by the client from the
 page: standalone sites carry a siteKey/accountId pair, Queue-it softblocks
@@ -14,7 +15,9 @@ so the builder does not decide the flow.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -57,10 +60,11 @@ class BotDeflectorBuilder(SensorBuilder):
 
     async def build(self, ctx: BuildContext) -> dict[str, Any]:
         fingerprint = build_fingerprint(ctx)
-        blob = json.dumps(fingerprint, sort_keys=True, separators=(",", ":"))
+        visitor = visitor_id(fingerprint, ctx)
         return {
             "fingerprint": fingerprint,
-            "headers": {HEADER_FINGERPRINT: blob},
+            "visitor_id": visitor,
+            "headers": {HEADER_FINGERPRINT: visitor},
         }
 
 
@@ -114,6 +118,40 @@ def build_fingerprint(ctx: BuildContext) -> dict[str, Any]:
         if "webgl" in provided and isinstance(provided["webgl"], dict):
             fingerprint["webgl"] = {**fingerprint.get("webgl", {}), **provided["webgl"]}
     return fingerprint
+
+
+#: FingerprintJS visitor ids are 32 lowercase hex characters; the flow sends the
+#: same value as solution_fingerprint and x-tt-client-fingerprint.
+VISITOR_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def visitor_id(fingerprint: dict[str, Any], ctx: BuildContext) -> str:
+    """The one visitor id every request of a flow carries.
+
+    A client capture wins (extra["visitor_id"] or a provided fingerprint's
+    visitorId). Otherwise it is a stable digest of the profile, so replaying one
+    task twice sends the same identifier and the server sees one visitor, not
+    one per request.
+    """
+    for source in (ctx.extra, ctx.extra.get("fingerprint")):
+        if not isinstance(source, dict):
+            continue
+        for key in ("visitor_id", "visitorId", "solution_fingerprint"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return _checked_visitor_id(value)
+    blob = json.dumps(fingerprint, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()[:32]
+
+
+def _checked_visitor_id(raw: str) -> str:
+    value = raw.strip().lower()
+    if not VISITOR_ID_RE.match(value):
+        raise SensorError(
+            "botdeflector visitor id must be 32 hex characters",
+            context={"length": len(value)},
+        )
+    return value
 
 
 def _get(source: Any, *names: str) -> Any:
