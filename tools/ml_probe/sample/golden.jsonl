@@ -1,0 +1,4 @@
+{"id":"g1","task":"grid","image_size":[300,300],"expected":[0,2]}
+{"id":"g2","task":"grid","image_size":[300,300],"expected":[4]}
+{"id":"c1","task":"click","image_size":[1000,600],"expected":[[100,200],[500,300]]}
+{"id":"h1","task":"hopscotch","image_size":[1600,1000],"expected":{"index":3,"point":[800,400]}}
