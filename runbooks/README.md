@@ -1,8 +1,7 @@
 # Runbooks
 
 Один файл на тип капчи плюс операционные runbook-и лейнов/процессов. Шаблон —
-[`_template.md`](_template.md); структура десяти заголовков обязательна. Правило
-`AGENTS.md`: новый солвер без runbook-а не мержится.
+[`_template.md`](_template.md); правило `AGENTS.md`: новый солвер без runbook-а не мержится.
 
 ## Операционные
 
@@ -13,10 +12,17 @@
 | [canary.md](canary.md) | фикстуры, 6-часовой прогон, type health, алерты, пустой набор |
 | [hcaptcha.md](hcaptcha.md) | тип hCaptcha: HTTP-путь, браузер, Riot/Steam/Epic, passive-ключи |
 
-## Типовые: 62 типа каталога
+## Покрытие
 
-Статус: **live** — файл есть; **pending** — runbook ещё не написан (тип в L0–L2, продаже не
-подлежит). Список типов и лейнов сверяется с `domain/catalog.py`; порядок — по семействам.
+Список типов сверяется с `src/captcha/domain/enums.py` и лейнами из
+`src/captcha/domain/catalog.py`. Один файл может покрывать несколько типов одного
+семейства — это отмечено в колонке «файл».
+
+**Сейчас: 36 из 62 вендорских типов + `hopscotch` (кастомный, вне 62). Pending — 26.**
+
+Статус в таблицах: **live** — файл есть; **pending** — runbook ещё не написан. «Live» здесь
+значит «документ есть», а не «тип проверен на живом сайте»: `experimental=True` у солвера
+важнее статуса файла.
 
 ### PoW / protocol
 
@@ -38,14 +44,15 @@
 
 | тип | лейн | runbook |
 |---|---|---|
-| `rotate` | cv | pending |
-| `slider` | cv | pending |
-| `click` | cv | pending |
-| `coordinates` | cv | pending |
-| `bounding_box` | cv | pending |
-| `classification_grid` | cv | pending |
-| `draw_around` | cv | pending |
-| `drag_drop` | cv | pending |
+| `rotate` | cv | [rotate.md](rotate.md) |
+| `slider` | cv | [slider.md](slider.md) (он же делегат для capy/keycaptcha/lemin/datadome_slider) |
+| `click` | cv | [click.md](click.md) |
+| `coordinates` | cv | [click.md](click.md) (общий солвер) |
+| `bounding_box` | cv | [bounding_box.md](bounding_box.md) |
+| `classification_grid` | cv | [classification_grid.md](classification_grid.md) |
+| `draw_around` | cv | [draw_around.md](draw_around.md) |
+| `drag_drop` | cv | [drag_drop.md](drag_drop.md) |
+| `hopscotch` | cv | [hopscotch.md](hopscotch.md) — кастомный тип, не входит в 62 |
 
 ### hCaptcha (browser)
 
@@ -54,16 +61,16 @@
 | `hcaptcha` | browser | [hcaptcha.md](hcaptcha.md) |
 | `hcaptcha_enterprise` | browser | [hcaptcha.md](hcaptcha.md) |
 
-### reCAPTCHA (cv/http)
+### reCAPTCHA
 
 | тип | лейн | runbook |
 |---|---|---|
-| `recaptcha_v2` | cv | pending |
-| `recaptcha_v2_enterprise` | cv | pending |
-| `recaptcha_v2_invisible` | cv | pending |
-| `recaptcha_v2_callback` | cv | pending |
-| `recaptcha_v3` | http | pending |
-| `recaptcha_v3_enterprise` | http | pending |
+| `recaptcha_v2` | cv | [recaptcha_v2.md](recaptcha_v2.md) |
+| `recaptcha_v2_enterprise` | cv | [recaptcha_v2.md](recaptcha_v2.md) |
+| `recaptcha_v2_invisible` | cv | [recaptcha_v2.md](recaptcha_v2.md) |
+| `recaptcha_v2_callback` | cv | [recaptcha_v2.md](recaptcha_v2.md) |
+| `recaptcha_v3` | http | [recaptcha_v3.md](recaptcha_v3.md) |
+| `recaptcha_v3_enterprise` | http | [recaptcha_v3.md](recaptcha_v3.md) |
 
 ### GeeTest (cv)
 
@@ -76,32 +83,32 @@
 
 | тип | лейн | runbook |
 |---|---|---|
-| `datadome_slider` | http | pending |
-| `datadome` | http | pending |
+| `datadome_slider` | http | [datadome.md](datadome.md) |
+| `datadome` | http | [datadome.md](datadome.md) |
 
-### FunCaptcha / Arkose (cv/http)
-
-| тип | лейн | runbook |
-|---|---|---|
-| `funcaptcha` | cv | pending |
-| `funcaptcha_bda` | http | pending |
-| `funcaptcha_enterprise` | cv | pending |
-
-### Turnstile / Cloudflare (http)
+### FunCaptcha / Arkose
 
 | тип | лейн | runbook |
 |---|---|---|
-| `turnstile` | http | pending |
-| `turnstile_invisible` | http | pending |
-| `cf_challenge` | http | pending |
+| `funcaptcha` | cv | [funcaptcha.md](funcaptcha.md) |
+| `funcaptcha_bda` | http | [funcaptcha.md](funcaptcha.md) |
+| `funcaptcha_enterprise` | cv | [funcaptcha.md](funcaptcha.md) |
+
+### Turnstile / Cloudflare
+
+| тип | лейн | runbook |
+|---|---|---|
+| `turnstile` | http | [turnstile.md](turnstile.md) |
+| `turnstile_invisible` | http | [turnstile.md](turnstile.md) |
+| `cf_challenge` | http | [cf_challenge.md](cf_challenge.md) |
 
 ### Антибот-движки (http)
 
 | тип | лейн | runbook |
 |---|---|---|
-| `akamai_sensor` | http | pending |
-| `akamai_sbsd` | http | pending |
-| `kasada` | http | pending |
+| `akamai_sensor` | http | [akamai_sensor.md](akamai_sensor.md) |
+| `akamai_sbsd` | http | [akamai_sbsd.md](akamai_sbsd.md) |
+| `kasada` | http | [kasada.md](kasada.md) |
 | `perimeterx` | http | pending |
 | `imperva` | http | pending |
 | `castle` | http | pending |
@@ -112,14 +119,14 @@
 | `botdeflector` | http | pending |
 | `awswaf` | cv | pending |
 
-### Interactive-вендоры (cv/http)
+### Interactive-вендоры
 
 | тип | лейн | runbook |
 |---|---|---|
 | `shein` | cv | pending |
 | `mtcaptcha` | cv | pending |
-| `tencent` | cv | pending |
-| `yidun` | cv | pending |
+| `tencent` | cv | [tencent.md](tencent.md) |
+| `yidun` | cv | [yidun.md](yidun.md) |
 | `alibaba` | cv | pending |
 | `prosopo` | cv | pending |
 | `captchafox` | cv | pending |
@@ -129,23 +136,44 @@
 | `binance` | cv | pending |
 | `hunt` | cv | pending |
 | `basilisk` | cv | pending |
-| `cutcaptcha` | cv | pending |
+| `cutcaptcha` | cv | [cutcaptcha.md](cutcaptcha.md) |
 | `capy` | cv | [capy.md](capy.md) |
 | `keycaptcha` | cv | [keycaptcha.md](keycaptcha.md) |
 | `lemin` | cv | [lemin.md](lemin.md) |
-| `atbcaptcha` | cv | pending |
+| `atbcaptcha` | cv | [atbcaptcha.md](atbcaptcha.md) |
 
-Итого: 7 типов покрыты файлом, 55 pending. Операционные runbook-и покрывают лейны, но не
-заменяют типовой: у типа свои payload, failure modes и модель.
+## Что осталось (26 pending)
+
+`friendly_captcha`, `altcha`, `text_captcha`, `math_image`, `image_to_text`,
+`audio_captcha`, `perimeterx`, `imperva`, `castle`, `tspd`, `cybersiara`,
+`twitch_integrity`, `botguard`, `botdeflector`, `awswaf`, `shein`, `mtcaptcha`,
+`alibaba`, `prosopo`, `captchafox`, `vk`, `yandex`, `temu`, `binance`, `hunt`,
+`basilisk`.
+
+Порядок разумной дописки: сначала `awswaf`/`shein` (у них есть grid-голова и фикстуры
+`tests/solvers/classification/fixtures/golden/`), потом cookie-движки (`perimeterx`,
+`imperva`, `castle`, `tspd`), потом PoW/OCR.
 
 ## Как писать
 
-1. Скопировать `_template.md` в `runbooks/<captcha_type>.md`, сохранить десять заголовков
-   и их порядок.
-2. Заполнять по коду, а не по памяти: §2 — `docs/protocol.md` + `Task.payload`, §3 — реальный
-   `solve_http`/`solve_browser`, §6 — коды `domain/errors.py` и фактически наблюдавшиеся
-   отказы.
-3. Неизмеренное помечать явно («не измерено», «FILL»), а не выдумывать цифры.
-4. Ссылаться на существующие файлы; если ссылка ведёт на чужой документ (например
-   `docs/hcaptcha-sites.md`), он должен быть в дереве на момент мержа.
+1. Формат — общий для всех типовых runbook-ов: `Snapshot` → `Payload` → `Endpoints / flow`
+   → `Solution keys` → `Ошибки` → `Canary / фикстуры` → `FILL / live-риски` →
+   `Проверка` → `Incident log` → `References`. `_template.md` задаёт те же десять
+   смысловых блоков (сенсор/модель у типов без сенсора уходят внутрь §3 и §7).
+2. Заполнять по коду, а не по памяти: §3 — реальный `solve_http`/`solve_browser`, §4 —
+   `domain/solution.py` + `extra`, §5 — `domain/errors.py` и фактически наблюдавшиеся отказы.
+3. Неизмеренное помечать явно («не проверено», «не измерено», FILL), а не выдумывать цифры.
+4. Ссылаться только на существующие файлы; ссылки проверяются глазами перед коммитом.
 5. Обновлять §9 (incident log) при каждом инциденте: дата — триггер — фикс.
+
+## Известные расхождения
+
+- `docs/baseline.md` и `AGENTS.md` говорят, что `slider` и `rotate` не грузятся без
+  `--extra cv`. Замер 2026-11-15: все 60 записей `solvers/loader.py` импортируются без
+  `torch`/`cv2`, `slider` решает на numpy-бэкенде (`offset 100`, `match_score≈0.81` на
+  голден-паре), а `rotate` падает уже на задаче с `ERR_CONFIG` (классический путь требует
+  OpenCV). `baseline.md` — снимок и не переписывается, факт зафиксирован здесь и в
+  [rotate.md](rotate.md) / [slider.md](slider.md).
+- У HTTP-солверов лейна `cv` (tencent, yidun, atbcaptcha, cutcaptcha, recaptcha_v2) есть
+  риск интеграции: `services/worker_cv/worker.py` собирает `SolverContext` без `http` и не
+  обрабатывает `ERR_NEEDS_BROWSER`. Подробности — в §7 соответствующих runbook-ов.
