@@ -33,7 +33,7 @@ class HCaptchaSolver(GridClassifier):
             CaptchaType.CLASSIFICATION_GRID,
         ),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=True,
         experimental=False,

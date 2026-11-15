@@ -30,7 +30,7 @@ class BinanceSolver(InteractiveBase):
         name="binance",
         types=(CaptchaType.BINANCE,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,  # `fvideo-id` and `data` payload AES-key are JS-signed
         experimental=True,
     )

@@ -30,7 +30,7 @@ class RotateSolver(Solver):
         name="rotate",
         types=(CaptchaType.ROTATE,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=False,
         experimental=False,

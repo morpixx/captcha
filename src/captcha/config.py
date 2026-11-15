@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     worker_http_concurrency: int = Field(default=512, alias="WORKER_HTTP_CONCURRENCY")
     worker_http_impersonate: str = Field(default="chrome124", alias="WORKER_HTTP_IMPERSONATE")
     worker_cv_device: str = Field(default="cpu", alias="WORKER_CV_DEVICE")
-    worker_browser_sessions: int = Field(default=20, alias="WORKER_BROWSER_SESSIONS")
 
     # proxy
     proxy_provider_primary: str = Field(default="", alias="PROXY_PROVIDER_PRIMARY")
@@ -55,13 +54,12 @@ class Settings(BaseSettings):
     otel_endpoint: str = Field(default="", alias="OTEL_ENDPOINT")
     sentry_dsn: str = Field(default="", alias="SENTRY_DSN")
 
-    # canary
-    canary_interval_sec: int = Field(default=21600, alias="CANARY_INTERVAL_SEC")
-    canary_alert_webhook: str = Field(default="", alias="CANARY_ALERT_WEBHOOK")
+    # admin surface: empty token disables /admin/* entirely
+    admin_token: str = Field(default="", alias="ADMIN_TOKEN")
 
-    # HTTP-first router behaviour
-    http_fallback_threshold: float = Field(default=0.7, alias="HTTP_FALLBACK_THRESHOLD")
-    http_fallback_window_sec: int = Field(default=3600, alias="HTTP_FALLBACK_WINDOW_SEC")
+    # 2captcha pingback (callbackUrl)
+    callback_timeout_sec: float = Field(default=10.0, alias="CALLBACK_TIMEOUT_SEC")
+    callback_max_attempts: int = Field(default=3, alias="CALLBACK_MAX_ATTEMPTS")
 
 
 @lru_cache(maxsize=1)

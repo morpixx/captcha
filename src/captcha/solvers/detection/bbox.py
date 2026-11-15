@@ -16,7 +16,7 @@ class BBoxSolver(Solver):
         name="bbox-yolo",
         types=(CaptchaType.BOUNDING_BOX,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=False,
         experimental=False,

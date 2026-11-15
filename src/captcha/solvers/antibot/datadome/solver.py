@@ -26,7 +26,7 @@ class DataDomeSolver(AntibotBase):
         name="datadome",
         types=(CaptchaType.DATADOME_FULL, CaptchaType.DATADOME_SLIDER),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

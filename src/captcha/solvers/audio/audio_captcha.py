@@ -43,7 +43,7 @@ class AudioCaptchaSolver(Solver):
         name="audio_captcha",
         types=(CaptchaType.AUDIO,),
         http=True,
-        browser=False,
+
         needs_gpu=False,
     )
 

@@ -27,7 +27,6 @@ class CloudflareChallengeSolver(AntibotBase):
         name="cloudflare_challenge",
         types=(CaptchaType.CF_CHALLENGE,),
         http=True,
-        browser=True,
         needs_js_runtime=True,
         experimental=True,
     )

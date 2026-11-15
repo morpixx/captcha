@@ -30,7 +30,7 @@ class AlibabaSolver(InteractiveBase):
         name="alibaba",
         types=(CaptchaType.ALIBABA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,  # UMID collect is heavy JS
         experimental=True,
     )

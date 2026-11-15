@@ -61,7 +61,7 @@ class MathImageSolver(Solver):
         name="math_image",
         types=(CaptchaType.MATH_IMAGE,),
         http=True,
-        browser=False,
+
     )
 
     def __init__(self) -> None:

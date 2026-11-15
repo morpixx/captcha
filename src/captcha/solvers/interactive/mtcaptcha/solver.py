@@ -36,7 +36,7 @@ class MTCaptchaSolver(InteractiveBase):
         name="mtcaptcha",
         types=(CaptchaType.MTCAPTCHA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=True,
     )

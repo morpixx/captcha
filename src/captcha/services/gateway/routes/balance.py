@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import ORJSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,3 +24,12 @@ async def get_balance(
         resp.model_dump(by_alias=True, exclude_none=True),
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.get("/getBalance", response_model=None)
+async def get_balance_get(
+    client_key: str = Query(alias="clientKey"),
+    session: AsyncSession = Depends(get_db),
+) -> ORJSONResponse:
+    """GET variant for clients that only implement the legacy query-string call."""
+    return await get_balance(GetBalanceRequest(client_key=client_key), session=session)

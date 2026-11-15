@@ -47,7 +47,7 @@ class TextCaptchaSolver(Solver):
         name="text_captcha",
         types=(CaptchaType.TEXT,),
         http=True,
-        browser=False,
+
     )
 
     def __init__(self) -> None:

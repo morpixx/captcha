@@ -282,7 +282,7 @@ class FunCaptchaSolver(_FunCaptchaBase):
         name="funcaptcha",
         types=(CaptchaType.FUNCAPTCHA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=False,
         version="0.1.0",
@@ -295,7 +295,7 @@ class FunCaptchaEnterpriseSolver(_FunCaptchaBase):
         name="funcaptcha_enterprise",
         types=(CaptchaType.FUNCAPTCHA_ENTERPRISE,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=False,
         version="0.1.0",

@@ -27,7 +27,7 @@ class BasiliskSolver(InteractiveBase):
         name="basilisk",
         types=(CaptchaType.BASILISK,),
         http=True,
-        browser=False,
+
         experimental=True,
     )
 

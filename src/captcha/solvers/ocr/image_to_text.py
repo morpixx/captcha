@@ -40,7 +40,7 @@ class ImageToTextSolver(Solver):
         name="image_to_text",
         types=(CaptchaType.IMAGE_TO_TEXT,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=False,
     )

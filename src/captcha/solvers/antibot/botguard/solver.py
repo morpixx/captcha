@@ -27,7 +27,7 @@ class BotGuardSolver(AntibotBase):
         name="botguard",
         types=(CaptchaType.BOTGUARD,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

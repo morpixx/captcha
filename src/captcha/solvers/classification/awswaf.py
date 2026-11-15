@@ -21,7 +21,7 @@ class AWSWAFSolver(GridClassifier):
         name="awswaf",
         types=(CaptchaType.AWSWAF,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=True,
         experimental=True,

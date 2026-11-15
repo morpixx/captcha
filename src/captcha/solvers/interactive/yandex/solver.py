@@ -32,7 +32,7 @@ class YandexSolver(InteractiveBase):
         name="yandex",
         types=(CaptchaType.YANDEX,),
         http=True,
-        browser=False,
+
         experimental=True,
     )
 

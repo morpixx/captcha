@@ -7,7 +7,11 @@ x-app: &app
     args:
       EXTRAS: ""
   restart: unless-stopped
-  env_file: .env
+  # Optional on purpose: a fresh clone must be able to run `make dev` before
+  # anyone copies .env.example. Defaults live in config.py.
+  env_file:
+    - path: .env
+      required: false
 
 services:
   redis:
@@ -54,6 +58,18 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot: brings the schema to head before anything serves traffic.
+  # Everything else waits for it — a gateway against an empty schema answers
+  # ERROR_KEY_DOES_NOT_EXIST for every request and looks like a logic bug.
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["python", "-m", "captcha.services.cli", "init-db"]
+    environment:
+      POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
+    depends_on:
+      postgres: {condition: service_healthy}
+
   gateway:
     <<: *app
     command: ["python", "-m", "captcha.services.gateway"]
@@ -65,7 +81,7 @@ services:
     depends_on:
       redis: {condition: service_healthy}
       postgres: {condition: service_healthy}
-      minio: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
 
   worker-http:
     <<: *app
@@ -75,7 +91,7 @@ services:
       POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
     depends_on:
       redis: {condition: service_healthy}
-      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
 
   worker-protocol:
     <<: *app
@@ -98,17 +114,6 @@ services:
       WORKER_CV_DEVICE: cpu
     depends_on:
       redis: {condition: service_healthy}
-
-  admin:
-    <<: *app
-    command: ["python", "-m", "captcha.services.admin"]
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
-    ports: ["8081:8081"]
-    depends_on:
-      redis: {condition: service_healthy}
-      postgres: {condition: service_healthy}
 
 volumes:
   redis-data:

@@ -119,7 +119,7 @@ class FriendlySolver(Solver):
         name="friendly",
         types=(CaptchaType.FRIENDLY,),
         http=True,
-        browser=False,
+
         version="0.1.0",
     )
 

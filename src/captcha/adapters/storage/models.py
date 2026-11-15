@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     func,
 )
@@ -73,6 +74,10 @@ class Task(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Client verdict: -1 incorrect, 1 correct, NULL never reported.
+    reported: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # 2captcha pingback target; set at create time when the client asks for one.
+    callback_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     account: Mapped[Account] = relationship(back_populates="tasks", lazy="raise")
     logs: Mapped[list[TaskLog]] = relationship(back_populates="task", cascade="all, delete-orphan", lazy="raise")
@@ -132,6 +137,67 @@ class SolverRun(Base):
 
 
 # ---------- sensor schema drift ----------
+
+
+# ---------- money ----------
+
+
+class Transaction(Base):
+    """Append-only ledger. `accounts.balance` is the running total; this is history.
+
+    Every balance change writes a row here, so a client can always answer "where
+    did this number come from" — which is the one thing a bare Numeric cannot.
+    """
+
+    __tablename__ = "transactions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # topup | charge | refund | bonus
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    balance_after: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (Index("ix_transactions_account_created", "account_id", "created_at"),)
+
+
+class PaymentIntent(Base):
+    """A pending top-up. The provider id lives in `external_id`, provider data in `payload`.
+
+    `status` moves pending -> paid exactly once, guarded by a conditional UPDATE,
+    so a replayed webhook cannot credit the same payment twice.
+    """
+
+    __tablename__ = "payment_intents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_payment_intents_account_created", "account_id", "created_at"),)
 
 
 class SensorSchemaVersion(Base):

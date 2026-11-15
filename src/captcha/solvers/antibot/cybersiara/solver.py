@@ -25,7 +25,7 @@ class CyberSiARASolver(AntibotBase):
         name="cybersiara",
         types=(CaptchaType.CYBERSIARA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=True,
     )

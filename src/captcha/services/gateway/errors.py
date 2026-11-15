@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import orjson
 from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
@@ -111,9 +110,3 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
         media_type="application/json",
     )
 
-
-class ORJSONResponseFast(ORJSONResponse):
-    """orjson with the OPT_SERIALIZE_NUMPY flag off — faster default shape."""
-
-    def render(self, content: Any) -> bytes:
-        return orjson.dumps(content, option=orjson.OPT_NON_STR_KEYS)

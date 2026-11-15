@@ -157,7 +157,6 @@ async def build_context(
         fingerprint_store=fp_store,
         models=model_registry,
         sensors=sensors,
-        browser=None,
         config=settings,
         logger=log,
         extra={

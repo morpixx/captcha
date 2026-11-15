@@ -25,7 +25,7 @@ class VKSolver(InteractiveBase):
         name="vk",
         types=(CaptchaType.VK,),
         http=True,
-        browser=False,
+
         experimental=True,
     )
 

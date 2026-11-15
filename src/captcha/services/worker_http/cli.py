@@ -25,14 +25,15 @@ from typing import Any
 
 import structlog
 
+from captcha.adapters.pingback import PingbackSender
 from captcha.adapters.queue import TaskStateStore
+from captcha.adapters.storage.persistence import TaskPersistence, session_factory_for
 from captcha.config import get_settings
 from captcha.observability import setup_logging, setup_metrics
 from captcha.solvers import discover_solvers, global_registry
 
 from .concurrency import ConcurrencyLimiter
 from .context import build_context
-from .stats import SuccessRateTracker
 from .worker import Worker
 
 
@@ -101,6 +102,12 @@ async def _amain(args: argparse.Namespace) -> int:
     setup_metrics()
     log = structlog.get_logger("captcha.worker.http.main")
 
+    # One pingback sender per process: one client, shared by every worker task.
+    pingback = PingbackSender(
+        timeout=settings.callback_timeout_sec,
+        max_attempts=settings.callback_max_attempts,
+    )
+
     loop_name = _install_loop_policy()
     log.info("loop.installed", policy=loop_name)
 
@@ -159,15 +166,13 @@ async def _amain(args: argparse.Namespace) -> int:
         log.warning("pg.unavailable", error=str(exc))
         pg = None
 
-    # ---- context, state, stats, limiter -----------------------------------
+    # ---- context, state, limiter ------------------------------------------
     bundle = await build_context(settings, redis=redis, pg=pg, logger=log)
     state = TaskStateStore(redis, prefix=settings.redis_stream_prefix)
-    stats = SuccessRateTracker(
-        redis,
-        prefix=settings.redis_stream_prefix,
-        window_sec=settings.http_fallback_window_sec,
-    )
     limiter = ConcurrencyLimiter(concurrency)
+    persistence = TaskPersistence(session_factory_for(pg))
+    if not persistence.enabled:
+        log.warning("persistence.disabled", hint="no postgres engine; task rows will stay pending")
 
     # ---- workers -----------------------------------------------------------
     workers: list[Worker] = []
@@ -179,8 +184,9 @@ async def _amain(args: argparse.Namespace) -> int:
             state=state,
             bundle=bundle,
             limiter=limiter,
-            stats=stats,
+            persistence=persistence,
             settings=settings,
+            pingback=pingback,
             consumer_count=args.batch_size,
             block_ms=args.block_ms,
             max_retries=args.max_retries,
@@ -223,6 +229,8 @@ async def _amain(args: argparse.Namespace) -> int:
     await asyncio.gather(*(w.shutdown() for w in workers), return_exceptions=True)
 
     await bundle.aclose()
+    with contextlib.suppress(Exception):
+        await pingback.aclose()
     with contextlib.suppress(Exception):
         await redis.aclose()
     if pg is not None:

@@ -31,7 +31,7 @@ class YidunSolver(InteractiveBase):
         name="yidun",
         types=(CaptchaType.YIDUN,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,  # `cb` + `fp` are JS-signed
         experimental=True,
     )

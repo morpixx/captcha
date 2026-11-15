@@ -32,7 +32,7 @@ class AtbCaptchaSolver(InteractiveBase):
         name="atbcaptcha",
         types=(CaptchaType.ATBCAPTCHA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,  # AES key is wrapped by a JS-only routine
         experimental=True,
     )

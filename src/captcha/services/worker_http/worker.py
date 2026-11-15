@@ -29,8 +29,11 @@ from uuid import UUID  # noqa: F401 — type reference for task.id
 
 import structlog
 
+from captcha.adapters.pingback import PingbackSender
 from captcha.adapters.queue import Consumer, TaskStateStore
 from captcha.adapters.queue.keys import Lane
+from captcha.adapters.storage.persistence import TaskPersistence
+from captcha.application.pingback import pingback_payload
 from captcha.config import Settings
 from captcha.domain.enums import CaptchaType, SolveMode, TaskStatus
 from captcha.domain.errors import (
@@ -45,7 +48,6 @@ from captcha.solvers import Solver, SolverContext, SolverRegistry
 
 from .concurrency import ConcurrencyLimiter
 from .context import WorkerContextBundle
-from .stats import SuccessRateTracker
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -68,8 +70,9 @@ class Worker:
         state: TaskStateStore,
         bundle: WorkerContextBundle,
         limiter: ConcurrencyLimiter,
-        stats: SuccessRateTracker,
+        persistence: TaskPersistence,
         settings: Settings,
+        pingback: PingbackSender | None = None,
         consumer_count: int = 16,
         block_ms: int = 5_000,
         max_retries: int = 3,
@@ -80,8 +83,9 @@ class Worker:
         self._state = state
         self._bundle = bundle
         self._limiter = limiter
-        self._stats = stats
+        self._persistence = persistence
         self._settings = settings
+        self._pingback = pingback
         self._log = structlog.get_logger("captcha.worker.http").bind(worker=worker_id)
 
         self._consumer = Consumer(
@@ -104,7 +108,11 @@ class Worker:
         await self._consumer.ensure_group()
 
     async def _solver_for(self, ct: CaptchaType) -> Solver | None:
-        cls = self._registry.pick(ct)
+        # allow_experimental: every antibot and interactive-vendor solver is
+        # marked experimental (never verified against a live site), and there is
+        # no non-experimental alternative for those types. Refusing them here
+        # would mean 36 registered solvers are unreachable.
+        cls = self._registry.pick(ct, allow_experimental=True)
         if cls is None:
             return None
         key = cls.info.name
@@ -180,6 +188,7 @@ class Worker:
             await self._state.set_processing(task.id, self._id, started_at=start)
         except Exception as exc:
             log.warning("state.set_processing_failed", error=str(exc))
+        await self._persistence.processing(task.id, self._id)
 
         solver = await self._solver_for(type_)
         if solver is None:
@@ -187,7 +196,7 @@ class Worker:
                 f"no solver registered for type {type_.value}",
                 context={"type": type_.value},
             )
-            await self._finalize_failure(msg_id, envelope, err, start, terminal=True, log=log)
+            await self._finalize_failure(msg_id, envelope, err, start, terminal=True, log=log, solver_name="none")
             return
 
         timeout = self._compute_timeout(task)
@@ -198,11 +207,15 @@ class Worker:
             result = await asyncio.wait_for(solver.solve_http(task, ctx), timeout=timeout)
         except TimeoutError:
             err = _timeout_error(timeout, type_.value)
-            await self._finalize_failure(msg_id, envelope, err, start, terminal=False, log=log)
+            await self._finalize_failure(
+                msg_id, envelope, err, start, terminal=False, log=log, solver_name=solver.info.name
+            )
             return
         except CaptchaError as exc:
             terminal = isinstance(exc, (UnsolvableError, ConfigError))
-            await self._finalize_failure(msg_id, envelope, exc, start, terminal=terminal, log=log)
+            await self._finalize_failure(
+                msg_id, envelope, exc, start, terminal=terminal, log=log, solver_name=solver.info.name
+            )
             return
         except asyncio.CancelledError:
             raise
@@ -212,7 +225,9 @@ class Worker:
                 f"solver crashed: {exc}",
                 context={"type": type_.value, "error_type": exc.__class__.__name__},
             )
-            await self._finalize_failure(msg_id, envelope, err, start, terminal=False, log=log)
+            await self._finalize_failure(
+                msg_id, envelope, err, start, terminal=False, log=log, solver_name=solver.info.name
+            )
             return
         finally:
             if http_client is not None:
@@ -227,7 +242,14 @@ class Worker:
         except Exception as exc:
             log.warning("state.set_ready_failed", error=str(exc))
         await self._consumer.ack(msg_id)
-        await self._stats.record(type_, ok=True)
+        await self._persistence.ready(
+            task.id,
+            result=result,
+            latency_ms=latency_ms,
+            solver_name=solver.info.name,
+            task_type=type_.value,
+        )
+        await self._send_pingback(task, TaskStatus.READY, result=result, error=None, log=log)
 
         metrics.tasks_done_total.labels(
             type=type_.value,
@@ -249,10 +271,12 @@ class Worker:
         *,
         terminal: bool,
         log: Any,
+        solver_name: str = "none",
     ) -> None:
         task = envelope.task
         type_val = task.type.value
         err_dict = err.to_dict()
+        latency_ms = (time.time() - start) * 1000.0
         metrics.solver_errors_total.labels(type=type_val, error_code=err.code).inc()
 
         # ProxyError feedback to the pool, when we have a bound proxy on the task.
@@ -263,14 +287,21 @@ class Worker:
                     reason=err.code,
                 )
 
-        await self._stats.record(task.type, ok=False)
-
         if terminal:
             try:
                 await self._state.set_failed(task.id, err_dict, finished_at=time.time())
             except Exception as exc:
                 log.warning("state.set_failed_failed", error=str(exc))
             await self._consumer.ack(msg_id)
+            await self._persistence.failed(
+                task.id,
+                error=err_dict,
+                latency_ms=latency_ms,
+                solver_name=solver_name,
+                task_type=type_val,
+                refund=True,
+            )
+            await self._send_pingback(task, TaskStatus.FAILED, result=None, error=err_dict, log=log)
             metrics.tasks_done_total.labels(
                 type=type_val,
                 status=TaskStatus.FAILED.value,
@@ -286,6 +317,15 @@ class Worker:
                 await self._state.set_failed(task.id, err_dict, finished_at=time.time())
             except Exception as exc:
                 log.warning("state.set_failed_failed", error=str(exc))
+            await self._persistence.failed(
+                task.id,
+                error=err_dict,
+                latency_ms=latency_ms,
+                solver_name=solver_name,
+                task_type=type_val,
+                refund=True,
+            )
+            await self._send_pingback(task, TaskStatus.FAILED, result=None, error=err_dict, log=log)
             metrics.tasks_done_total.labels(
                 type=type_val,
                 status=TaskStatus.FAILED.value,
@@ -300,6 +340,27 @@ class Worker:
             )
 
     # ---------------------------------------------------------------- helpers
+
+    async def _send_pingback(
+        self,
+        task: Task,
+        task_status: TaskStatus,
+        *,
+        result: SolverResult | None,
+        error: dict[str, Any] | None,
+        log: Any,
+    ) -> None:
+        """Best-effort callback for a task that just reached a terminal state."""
+        if not task.callback_url or self._pingback is None:
+            return
+        payload = pingback_payload(task_status, result, error, task.type, task.site_url)
+        try:
+            delivered = await self._pingback.send(task.callback_url, payload)
+        except Exception:
+            # The sender is contractually silent, but a callback may never kill the loop.
+            log.exception("task.pingback_crashed", callback_url=task.callback_url)
+            return
+        log.info("task.pingback", callback_url=task.callback_url, delivered=delivered)
 
     def _compute_timeout(self, task: Task) -> float:
         if task.deadline_ts is None:

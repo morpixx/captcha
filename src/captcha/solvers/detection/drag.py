@@ -24,7 +24,7 @@ class DragDropSolver(Solver):
         name="drag-drop-yolo",
         types=(CaptchaType.DRAG_DROP,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=False,
         experimental=False,

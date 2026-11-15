@@ -26,7 +26,7 @@ class AkamaiSBSDSolver(AntibotBase):
         name="akamai_sbsd",
         types=(CaptchaType.AKAMAI_SBSD,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

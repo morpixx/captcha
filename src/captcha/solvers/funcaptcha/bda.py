@@ -214,7 +214,7 @@ class FunCaptchaBDASolver(Solver):
         name="funcaptcha_bda",
         types=(CaptchaType.FUNCAPTCHA_BDA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
         version="0.1.0",

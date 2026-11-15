@@ -3,7 +3,17 @@ from __future__ import annotations
 from uuid import UUID
 
 from captcha.domain.enums import CaptchaType
-from captcha.domain.lanes import Lane
+from captcha.domain.lanes import LANES, Lane
+
+__all__ = [
+    "LANES",
+    "Lane",
+    "consumer_group",
+    "dead_letter_stream",
+    "stats_key",
+    "stream_name",
+    "task_hash_key",
+]
 
 
 def stream_name(prefix: str, lane: Lane) -> str:

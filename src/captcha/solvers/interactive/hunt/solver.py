@@ -24,7 +24,7 @@ class HuntSolver(InteractiveBase):
         name="hunt",
         types=(CaptchaType.HUNT,),
         http=True,
-        browser=False,
+
         experimental=True,
     )
 

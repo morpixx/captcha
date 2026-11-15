@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from captcha.adapters.queue import Producer, TaskStateStore
 from captcha.adapters.storage import init_engine, shutdown_engine
 from captcha.config import Settings, get_settings
+from captcha.domain.enums import CaptchaType
 from captcha.observability.logging import setup_logging
 from captcha.services.gateway.errors import validation_error_handler
 from captcha.services.gateway.metrics import build_metrics_app
@@ -48,6 +49,8 @@ async def build_state(settings: Settings) -> AppState:
     state_store = TaskStateStore(redis, prefix=settings.redis_stream_prefix)
     producer = Producer(redis, prefix=settings.redis_stream_prefix)
     sm = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    solver_types = _load_solver_types()
+    _log.info("gateway.solvers", count=len(solver_types))
     return AppState(
         settings=settings,
         redis=redis,
@@ -55,7 +58,21 @@ async def build_state(settings: Settings) -> AppState:
         sessionmaker=sm,
         state_store=state_store,
         producer=producer,
+        solver_types=solver_types,
     )
+
+
+def _load_solver_types() -> frozenset[CaptchaType]:
+    """Which captcha types this deployment can actually solve.
+
+    The gateway refuses everything else up front (`ERROR_TASK_NOT_SUPPORTED`)
+    instead of charging the client and letting the task rot until the deadline.
+    Loading the registry costs one import pass at boot and mirrors what every
+    worker does anyway.
+    """
+    from captcha.solvers import discover_solvers
+
+    return frozenset(discover_solvers().all_types())
 
 
 async def shutdown_state(state: AppState) -> None:

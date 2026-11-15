@@ -47,7 +47,7 @@ class TurnstileInvisibleSolver(Solver):
         name="turnstile_invisible",
         types=(CaptchaType.TURNSTILE_INVISIBLE,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         needs_gpu=False,
         experimental=True,

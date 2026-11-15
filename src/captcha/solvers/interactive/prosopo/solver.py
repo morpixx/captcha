@@ -32,7 +32,7 @@ class ProsopoSolver(InteractiveBase):
         name="prosopo",
         types=(CaptchaType.PROSOPO,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=True,
     )

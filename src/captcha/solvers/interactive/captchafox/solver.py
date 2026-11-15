@@ -28,7 +28,7 @@ class CaptchaFoxSolver(InteractiveBase):
         name="captchafox",
         types=(CaptchaType.CAPTCHAFOX,),
         http=True,
-        browser=False,
+
         experimental=True,
     )
 

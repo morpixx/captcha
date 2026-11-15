@@ -24,7 +24,7 @@ class CastleSolver(AntibotBase):
         name="castle",
         types=(CaptchaType.CASTLE,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=True,
     )

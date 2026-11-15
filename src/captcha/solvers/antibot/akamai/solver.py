@@ -26,7 +26,7 @@ class AkamaiSensorSolver(AntibotBase):
         name="akamai_sensor",
         types=(CaptchaType.AKAMAI_SENSOR,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=True,
     )

@@ -6,8 +6,7 @@ from typing import Any, ClassVar
 
 import msgspec
 
-from captcha.domain import CaptchaType, SolveMode, SolverResult, Task
-from captcha.domain.errors import CaptchaError
+from captcha.domain import CaptchaType, SolverResult, Task
 
 
 class SolverInfo(msgspec.Struct, frozen=True, kw_only=True):
@@ -16,7 +15,6 @@ class SolverInfo(msgspec.Struct, frozen=True, kw_only=True):
     name: str
     types: tuple[CaptchaType, ...]
     http: bool = True
-    browser: bool = False
     needs_js_runtime: bool = False
     needs_gpu: bool = False
     experimental: bool = False
@@ -37,7 +35,6 @@ class SolverContext:
     fingerprint_store: Any = None  # captcha.adapters.profiles.Store
     models: Any = None  # captcha.adapters.weights.Registry
     sensors: Any = None  # captcha.engines.Registry
-    browser: Any = None  # captcha.adapters.browser.Pool (fallback only)
     config: Any = None  # captcha.domain.Settings
     logger: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
@@ -50,7 +47,6 @@ class Solver(ABC):
       1. registry discovers via entry_points at worker startup
       2. worker instantiates, calls `prepare(ctx)` once
       3. for each task matching `info.types`, worker calls `solve_http(task, ctx)`
-         (or `solve_browser(task, ctx)` when preferred_mode == BROWSER or fallback)
       4. worker calls `shutdown()` on worker stop
 
     Contract: raise a CaptchaError subclass on known failure modes; let
@@ -70,15 +66,4 @@ class Solver(ABC):
 
     @abstractmethod
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
-        """HTTP-first solve. Default path for every type."""
-
-    async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
-        """Browser fallback. Default: not supported."""
-        raise CaptchaError("browser mode not supported for this solver", context={"type": task.type.value})
-
-    def supports(self, mode: SolveMode) -> bool:
-        if mode == SolveMode.HTTP:
-            return self.info.http
-        if mode == SolveMode.BROWSER:
-            return self.info.browser
-        return True
+        """Solve one task. Every solver is HTTP-first; there is no browser path."""

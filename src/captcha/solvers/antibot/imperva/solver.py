@@ -26,7 +26,7 @@ class ImpervaSolver(AntibotBase):
         name="imperva",
         types=(CaptchaType.IMPERVA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

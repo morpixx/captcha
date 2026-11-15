@@ -28,7 +28,6 @@ class TurnstileSolver(AntibotBase):
         name="turnstile",
         types=(CaptchaType.TURNSTILE, CaptchaType.TURNSTILE_INVISIBLE),
         http=True,
-        browser=True,
         needs_js_runtime=True,
         experimental=True,
     )

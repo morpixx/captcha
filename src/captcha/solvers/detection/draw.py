@@ -24,7 +24,7 @@ class DrawAroundSolver(Solver):
         name="draw-around-yolo",
         types=(CaptchaType.DRAW_AROUND,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=False,
         experimental=False,

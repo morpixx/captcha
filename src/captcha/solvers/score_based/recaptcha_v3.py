@@ -172,7 +172,7 @@ class RecaptchaV3Solver(_RecaptchaV3Base):
         name="recaptcha_v3",
         types=(CaptchaType.RECAPTCHA_V3,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=True,
         version="0.1.0",
@@ -185,7 +185,7 @@ class RecaptchaV3EnterpriseSolver(_RecaptchaV3Base):
         name="recaptcha_v3_enterprise",
         types=(CaptchaType.RECAPTCHA_V3_ENTERPRISE,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=True,
         version="0.1.0",

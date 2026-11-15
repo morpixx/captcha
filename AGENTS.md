@@ -10,7 +10,7 @@ A captcha-solving service with a 2captcha-compatible HTTP API. One Python distri
 the code is adaptation to other people's protocols; the core is deliberately small.
 
 Non-negotiables: the layer direction, the per-type solution shape, and the fact that a
-worker must boot without optional extras (`cv`, `browser`) installed.
+worker must boot without the optional `cv` extra installed.
 
 ## Read first
 
@@ -32,7 +32,7 @@ worker must boot without optional extras (`cv`, `browser`) installed.
 | database schema or migrations | `adapters/storage/models.py`, `adapters/storage/migrations/` |
 | transport, TLS/JA3, proxies | `adapters/transport/`, `adapters/proxy/` |
 | JS challenge execution | `adapters/jssandbox/`, `engines/base.py` |
-| ML models, weights, CV solvers | `adapters/weights/`, `solvers/classification/`, `solvers/detection/` |
+| ML models, weights, CV solvers | `docs/ml.md`, `adapters/weights/`, `solvers/classification/`, `solvers/detection/` |
 | docker/compose/CI | `infra/docker/app.Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` |
 | process, branches, review | `docs/workflow.md` |
 
@@ -58,7 +58,7 @@ Same style in every session, regardless of who is driving:
 3. **No `get_settings()` outside `services/`.** Config is read once in a composition root and
    passed down. One documented exception exists in two text solvers; don't copy it.
 4. **Run everything through `uv run`.** No venv activation, no bare `python`/pytest on PATH.
-5. **A worker must start without `--extra cv`.** Anything importing torch/opencv/playwright goes
+5. **A worker must start without `--extra cv`.** Anything importing torch/opencv goes
    inside a function or behind `_register_one`-style try/except.
 6. **Errors are translated at the adapter boundary.** Solvers and domain raise only
    `captcha.domain.errors.CaptchaError` subclasses; the code becomes an `ERR_*` in the API.
@@ -80,26 +80,30 @@ src/captcha/
 ├── domain/              pure core: enums, task, solution, errors, pricing, lanes, profile
 ├── application/         use-case level policy (lane routing)
 ├── adapters/            transport(curl_cffi) queue(redis) storage(postgres) jssandbox
-│                        weights(s3) proxy profiles browser
+│                        weights(s3) proxy profiles pingback
 ├── engines/             <engine>/builder.py — payload assembly per antibot engine;
 │                        base.py, registry.py, __init__.py registers all builders
 ├── solvers/             base.py (Solver ABC), registry.py, loader.py (enrollment table),
 │                        harness.py + one package per captcha family
 ├── crypto/ behavior/    leaf libraries, no imports outside domain
 ├── observability/       logging, metrics, tracing, sentry
-└── services/            gateway, worker_http, worker_cv, worker_protocol, worker_browser,
-                         canary, admin, pipeline — cli.py + __main__.py + wiring
-tests/                   tests/domain, tests/solvers/<family>
+└── services/            gateway, worker_http, worker_cv, worker_protocol, cli —
+                         cli.py + __main__.py + wiring
+tests/                   tests/domain, tests/gateway, tests/application, tests/solvers/<family>
 docs/ runbooks/ infra/   documentation, per-type runbooks, docker
 ```
 
 ## Current coverage (keep it accurate when you change it)
 
 - `CaptchaType`: 62 values. `AntibotEngine`: 12.
-- Solvers enrolled in `solvers/loader.py`: 53. Registered at runtime without extras: 51
+- Solvers enrolled in `solvers/loader.py`: 58. Registered at runtime without extras: 56
   (`slider` and `rotate` need opencv from `--extra cv`).
-- Types with no solver yet: `geetest_v3`, `geetest_v4`, `capy`, `keycaptcha`, `lemin`
-  (plus `rotate`/`slider` if the cv extra is missing).
+- Every one of the 62 types has a solver. Without `--extra cv` the coverage is 60/62;
+  with it, 62/62. `experimental=True` means "protocol written, wire constants not verified
+  against a live site" — 41 of the 58 are in that state.
+- API surface: `docs/protocol.md`. Three lanes only — `http`, `cv`, `protocol`; there is no
+  browser lane and no playwright dependency.
+- Tests: 262 passing, 3 skipped without `--extra cv`.
 
 ## Commands
 
@@ -110,12 +114,14 @@ make fmt                       # ruff format
 make typecheck                 # mypy src
 make test                      # pytest -q
 make imports                   # import-linter: six architecture contracts
-make dev                       # docker compose: gateway + workers + redis/pg/minio
-make canary                    # regression run against a live gateway
+make dev                       # docker compose: redis/pg/minio + migrate + gateway + workers
+make migrate                   # alembic upgrade head against POSTGRES_URL (no docker)
+make seed                      # create a demo account, print its clientKey
+make check                     # lint + imports + test
 ```
 
-CI runs `ruff`, `lint-imports`, and `pytest tests/domain tests/solvers/pow` on Python 3.14.
-CV tests need torch and run in a separate job later.
+CI runs `ruff`, `lint-imports`, and `pytest` on Python 3.14. CV tests need torch and run in a
+separate job later.
 
 ## Recipes
 
@@ -128,8 +134,8 @@ CV tests need torch and run in a separate job later.
 3. Append `"captcha.solvers.<family>.<module>:<Class>"` to `SOLVERS` in `solvers/loader.py`.
 4. Add a test under `tests/solvers/<family>/`.
 5. Write `runbooks/<type>.md` from `runbooks/_template.md`.
-6. If the type is new to the enum, add it to `domain/enums.py` and `domain/pricing.py`, and
-   decide its lane in `domain/lanes.py`.
+6. If the type is new to the enum, add it to `domain/enums.py` and give it a row in
+   `domain/catalog.py` (lane, price, solution kind).
 
 ### Add an antibot engine payload builder
 
@@ -182,6 +188,6 @@ Squash merge. Never force-push `main`.
 - [ ] `make lint imports test` green locally;
 - [ ] new behaviour covered by at least one test;
 - [ ] no layer violation (the contracts say so, not "I think so");
-- [ ] worker still boots without optional extras if the change touched cv/browser code;
+- [ ] worker still boots without `--extra cv` if the change touched torch/opencv code;
 - [ ] docs/runbook updated where the change is user-visible;
 - [ ] PR description says *why*, not just *what*.

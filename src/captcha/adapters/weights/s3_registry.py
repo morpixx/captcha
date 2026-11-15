@@ -15,6 +15,7 @@ import hashlib
 import io
 import threading
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -196,6 +197,77 @@ class Registry:
     def load_safetensors(self, name: str, version: str = "latest", *, device: str = "cpu") -> dict[str, Any]:
         path = self.download(name, version)
         return load_safetensors(path, device=device)
+
+    # ---- publishing ------------------------------------------------------
+
+    def publish(
+        self,
+        name: str,
+        version: str,
+        weights_path: str | Path,
+        *,
+        framework: str = "torch",
+        labels: dict[str, str] | None = None,
+        input_schema: dict[str, Any] | None = None,
+        output_schema: dict[str, Any] | None = None,
+        set_latest: bool = True,
+    ) -> ModelMeta:
+        """Upload one (name, version) pair: weights blob + meta.json + 'latest'.
+
+        This is the only supported way to make a model visible to a solver. The
+        object layout matches what `download()` expects:
+            <name>/<version>/weights.<ext>
+            <name>/<version>/meta.json
+            <name>/latest                     (body = version string)
+        """
+        from .meta import encode_meta
+
+        path = Path(weights_path)
+        if not path.exists():
+            raise ConfigError("weights file missing", context={"path": str(path)})
+
+        blob = path.read_bytes()
+        digest = hashlib.sha256(blob).hexdigest()
+        key = f"{name}/{version}/weights{path.suffix or '.bin'}"
+
+        try:
+            self._s3.put_object(Bucket=self.bucket, Key=key, Body=blob)
+        except (BotoCoreError, ClientError) as e:
+            raise ConfigError("weights upload failed", context={"key": key, "error": str(e)}) from e
+
+        meta = ModelMeta(
+            name=name,
+            version=version,
+            framework=framework,  # type: ignore[arg-type]
+            s3_key=key,
+            sha256=digest,
+            size_bytes=len(blob),
+            input_schema=input_schema or {},
+            output_schema=output_schema or {},
+            labels=labels or {},
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        meta_key = f"{name}/{version}/{_META_FILE}"
+        try:
+            self._s3.put_object(Bucket=self.bucket, Key=meta_key, Body=encode_meta(meta))
+        except (BotoCoreError, ClientError) as e:
+            raise ConfigError("meta upload failed", context={"key": meta_key, "error": str(e)}) from e
+
+        if set_latest:
+            self.set_latest(name, version)
+
+        with self._meta_lock:
+            self._meta_cache[(name, version)] = meta
+        log.info("models.published", name=name, version=version, key=key, sha256=digest)
+        return meta
+
+    def set_latest(self, name: str, version: str) -> None:
+        """Point `<name>/latest` at `version`. Readers pick it up on their next call."""
+        try:
+            self._s3.put_object(Bucket=self.bucket, Key=f"{name}/{_LATEST_KEY}", Body=version.encode())
+        except (BotoCoreError, ClientError) as e:
+            raise ConfigError("latest pointer write failed", context={"name": name, "version": version}) from e
+        log.info("models.latest", name=name, version=version)
 
     # ---- hot-reload -----------------------------------------------------
 

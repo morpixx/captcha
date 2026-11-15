@@ -29,7 +29,7 @@ class TencentSolver(InteractiveBase):
         name="tencent",
         types=(CaptchaType.TENCENT,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,  # TDC collect() is obfuscated JS
         experimental=True,
     )

@@ -27,7 +27,7 @@ class CutCaptchaSolver(InteractiveBase):
         name="cutcaptcha",
         types=(CaptchaType.CUTCAPTCHA,),
         http=True,
-        browser=False,
+
         experimental=True,
     )
 

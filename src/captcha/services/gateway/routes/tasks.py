@@ -8,7 +8,7 @@ from uuid import UUID
 
 import msgspec
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import ORJSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +41,10 @@ from captcha.services.gateway.state import AppState
 
 _log = structlog.get_logger(__name__)
 
+#: Hard stop for a task whose solver hangs. The worker also has a per-call
+#: timeout; this is the outer bound that the deadline-aware solvers honour.
+_TASK_TTL_SEC = 300.0
+
 router = APIRouter(tags=["tasks"], default_response_class=ORJSONResponse)
 
 
@@ -62,6 +66,12 @@ async def create_task(
     except ValueError:
         return ORJSONResponse(envelope(ERR_UNSUPPORTED_TYPE), status_code=status.HTTP_200_OK)
 
+    # No solver in this deployment means no answer will ever come — refuse
+    # before charging, not after the deadline.
+    if ct not in state.solver_types:
+        _log.info("task.unsupported", type=ct.value, known=len(state.solver_types))
+        return ORJSONResponse(envelope(ERR_UNSUPPORTED_TYPE), status_code=status.HTTP_200_OK)
+
     cost = estimate_cost(ct)
     try:
         await acc_repo.charge(account.id, cost)
@@ -73,12 +83,12 @@ async def create_task(
     # DB row first — the task id is the UUID the row carries.
     payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
     payload.pop("type", None)
-    payload.pop("preferred_mode", None)
     db_task = await task_repo.create(
         account_id=account.id,
         type_=ct.value,
         payload=payload,
         cost=cost,
+        callback_url=body.callback_url,
     )
     task_id: UUID = db_task.id
 
@@ -94,8 +104,9 @@ async def create_task(
         proxy=body.task.proxy,
         user_agent=body.task.user_agent,
         language=body.task.language,
-        preferred_mode=body.task.preferred_mode,
+        callback_url=body.callback_url,
         created_at=time.time(),
+        deadline_ts=time.time() + _TASK_TTL_SEC,
         client_id=str(account.id),
     )
     env = TaskEnvelope(task=task, status=TaskStatus.PENDING)
@@ -197,6 +208,18 @@ async def get_task_result(
         resp.error_code = str(db_task.error.get("code") or "ERR_UNKNOWN")
         resp.error_description = str(db_task.error.get("message") or "")
     return ORJSONResponse(resp.model_dump(by_alias=True, exclude_none=True))
+
+
+@router.get("/getTaskResult", response_model=None)
+async def get_task_result_get(
+    client_key: str = Query(alias="clientKey"),
+    task_id: str = Query(alias="taskId"),
+    session: AsyncSession = Depends(get_db),
+    state: AppState = Depends(get_state),
+) -> ORJSONResponse:
+    """GET variant; 2captcha clients built on the query-string form use this."""
+    body = GetTaskResultRequest(client_key=client_key, task_id=task_id)
+    return await get_task_result(body, session=session, state=state)
 
 
 # Alias — 2captcha's historical `/res.php` behavior some clients still send a

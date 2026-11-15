@@ -26,7 +26,7 @@ class TSPDSolver(AntibotBase):
         name="tspd",
         types=(CaptchaType.TSPD,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

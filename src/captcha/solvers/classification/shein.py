@@ -19,7 +19,7 @@ class SheinSolver(GridClassifier):
         name="shein",
         types=(CaptchaType.SHEIN,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=True,
         experimental=True,

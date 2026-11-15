@@ -27,7 +27,7 @@ class TemuSolver(InteractiveBase):
         name="temu",
         types=(CaptchaType.TEMU,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,  # anti_content is JS-signed
         experimental=True,
     )

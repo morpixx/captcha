@@ -16,7 +16,7 @@ class ClickSolver(Solver):
         name="click-yolo",
         types=(CaptchaType.CLICK, CaptchaType.COORDINATES),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=False,
         experimental=False,

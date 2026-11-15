@@ -331,7 +331,7 @@ class RecaptchaV2AudioSolver(_RecaptchaV2Base):
             CaptchaType.RECAPTCHA_V2_CALLBACK,
         ),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=False,
         version="0.1.0",
@@ -346,7 +346,7 @@ class RecaptchaV2EnterpriseSolver(_RecaptchaV2Base):
         name="recaptcha_v2_enterprise_audio",
         types=(CaptchaType.RECAPTCHA_V2_ENTERPRISE,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         experimental=False,
         version="0.1.0",

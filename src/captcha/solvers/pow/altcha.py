@@ -64,7 +64,7 @@ class AltchaSolver(Solver):
         name="altcha",
         types=(CaptchaType.ALTCHA,),
         http=True,
-        browser=False,
+
         version="0.1.0",
     )
 

@@ -25,7 +25,7 @@ class FunCaptchaGridSolver(GridClassifier):
             CaptchaType.FUNCAPTCHA_ENTERPRISE,
         ),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=True,
         experimental=True,

@@ -25,7 +25,7 @@ class TwitchIntegritySolver(AntibotBase):
         name="twitch_integrity",
         types=(CaptchaType.TWITCH_INTEGRITY,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

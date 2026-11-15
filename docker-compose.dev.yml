@@ -1,43 +1,12 @@
+# Overlay for the observability stack and the node JS sidecar.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile full up -d
 services:
-  worker-browser:
-    profiles: ["full"]
-    build:
-      context: .
-      dockerfile: infra/docker/app.Dockerfile
-      args:
-        EXTRAS: "--extra browser"
-    command: ["python", "-m", "captcha.services.worker_browser"]
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      redis: {condition: service_healthy}
-    shm_size: 2gb
-
   js-sidecar:
     profiles: ["full"]
     build:
       context: ./src/captcha/adapters/jssandbox/sidecar_node
     restart: unless-stopped
     ports: ["7474:7474"]
-
-  canary:
-    profiles: ["full"]
-    build:
-      context: .
-      dockerfile: infra/docker/app.Dockerfile
-      args:
-        EXTRAS: ""
-    command: ["python", "-m", "captcha.services.canary"]
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      POSTGRES_URL: postgresql+asyncpg://captcha:captcha@postgres:5432/captcha
-    depends_on:
-      redis: {condition: service_healthy}
-      postgres: {condition: service_healthy}
 
   prometheus:
     profiles: ["full"]

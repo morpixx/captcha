@@ -28,6 +28,7 @@ import structlog
 
 from captcha.adapters.queue import Consumer, TaskStateStore
 from captcha.adapters.queue.keys import Lane
+from captcha.adapters.storage.persistence import TaskPersistence, engine_session_factory
 from captcha.adapters.weights import Registry as ModelRegistry
 from captcha.config import Settings
 from captcha.domain import Task, TaskEnvelope
@@ -115,6 +116,7 @@ class Worker:
             ) from exc
 
         self._state = TaskStateStore(self._redis, prefix=self.settings.redis_stream_prefix)
+        self._persistence = TaskPersistence(engine_session_factory(self.settings.postgres_url))
         self._consumer = Consumer(
             self._redis,
             lane=LANE,
@@ -286,6 +288,7 @@ class Worker:
                 exc,
                 solve_mode,
                 terminal=isinstance(exc, UnsolvableError),
+                solver_name=solver.info.name,
             )
             return
         except asyncio.CancelledError:
@@ -296,7 +299,9 @@ class Worker:
                 str(exc) or type(exc).__name__,
                 context={"exc_type": type(exc).__name__, "type": task.type.value},
             )
-            await self._handle_failure(message_id, envelope, wrapped, solve_mode, terminal=False)
+            await self._handle_failure(
+                message_id, envelope, wrapped, solve_mode, terminal=False, solver_name=solver.info.name
+            )
             return
 
         latency_s = time.perf_counter() - start
@@ -307,6 +312,13 @@ class Worker:
             await self._state.set_ready(task.id, result, finished_at=time.time())
         except Exception as exc:
             self._log.warning("state.set_ready_failed", error=str(exc))
+        await self._persistence.ready(
+            task.id,
+            result=result,
+            latency_ms=latency_s * 1000.0,
+            solver_name=solver.info.name,
+            task_type=task.type.value,
+        )
         await self._consumer.ack(message_id)
         metrics.active_tasks.labels(lane=LANE).dec()
         metrics.task_latency_seconds.labels(type=task.type.value, solve_mode=solve_mode.value).observe(latency_s)
@@ -337,6 +349,14 @@ class Worker:
             await self._state.set_failed(task.id, err.to_dict(), finished_at=time.time())
         except Exception as exc:
             self._log.warning("state.set_failed_failed", error=str(exc))
+        await self._persistence.failed(
+            task.id,
+            error=err.to_dict(),
+            latency_ms=0.0,
+            solver_name="none",
+            task_type=task.type.value,
+            refund=True,
+        )
         await self._consumer.ack(message_id)
         metrics.active_tasks.labels(lane=LANE).dec()
         metrics.solver_errors_total.labels(type=task.type.value, error_code=err.code).inc()
@@ -352,6 +372,7 @@ class Worker:
         solve_mode: SolveMode,
         *,
         terminal: bool,
+        solver_name: str = "none",
     ) -> None:
         assert self._state is not None and self._consumer is not None
         task = envelope.task
@@ -362,6 +383,14 @@ class Worker:
                 await self._state.set_failed(task.id, exc.to_dict(), finished_at=time.time())
             except Exception as exc2:
                 self._log.warning("state.set_failed_failed", error=str(exc2))
+            await self._persistence.failed(
+                task.id,
+                error=exc.to_dict(),
+                latency_ms=0.0,
+                solver_name=solver_name,
+                task_type=task.type.value,
+                refund=True,
+            )
             metrics.tasks_done_total.labels(
                 type=task.type.value, status=TaskStatus.FAILED.value, solve_mode=solve_mode.value
             ).inc()
@@ -379,6 +408,14 @@ class Worker:
                     await self._state.set_failed(task.id, exc.to_dict(), finished_at=time.time())
                 except Exception as exc2:
                     self._log.warning("state.set_failed_failed", error=str(exc2))
+                await self._persistence.failed(
+                    task.id,
+                    error=exc.to_dict(),
+                    latency_ms=0.0,
+                    solver_name=solver_name,
+                    task_type=task.type.value,
+                    refund=True,
+                )
                 metrics.tasks_done_total.labels(
                     type=task.type.value,
                     status=TaskStatus.FAILED.value,

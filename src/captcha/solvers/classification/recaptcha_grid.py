@@ -23,7 +23,7 @@ class RecaptchaGridSolver(GridClassifier):
         name="recaptcha_grid",
         types=(CaptchaType.CLASSIFICATION_GRID,),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=True,
         experimental=False,

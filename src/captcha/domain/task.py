@@ -25,6 +25,7 @@ class Task(msgspec.Struct, frozen=True, kw_only=True):
     proxy: str | None = None
     user_agent: str | None = None
     language: str | None = None
+    callback_url: str | None = None
     created_at: float = 0.0
     deadline_ts: float | None = None
     client_id: str | None = None

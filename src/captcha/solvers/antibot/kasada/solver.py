@@ -26,7 +26,7 @@ class KasadaSolver(AntibotBase):
         name="kasada",
         types=(CaptchaType.KASADA,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

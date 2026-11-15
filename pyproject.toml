@@ -7,6 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     # api + workers
     "fastapi>=0.115",
+    # request.form() in the legacy /in.php endpoint: FastAPI refuses to parse
+    # form-encoded bodies without it, and every legacy client sends one.
+    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.32",
     "orjson>=3.10",
     "starlette>=0.41",
@@ -32,8 +35,7 @@ dependencies = [
     "numpy>=2.0",
     "pillow>=11",
     "simpleeval>=0.9.13",
-    # scheduling + observability
-    "apscheduler>=3.10.4",
+    # observability
     "structlog>=24.4",
     "prometheus-client>=0.21",
     "opentelemetry-sdk>=1.27",
@@ -45,7 +47,6 @@ dependencies = [
 [project.optional-dependencies]
 # heavy, only for the cv lane and browser fallback
 cv = ["torch>=2.4", "torchvision>=0.19", "opencv-python-headless>=4.10", "soundfile>=0.12"]
-browser = ["playwright>=1.48"]
 dev = [
     "ruff>=0.7",
     "mypy>=1.13",
@@ -62,10 +63,7 @@ captcha-gateway = "captcha.services.gateway.cli:run"
 captcha-worker-http = "captcha.services.worker_http.cli:main"
 captcha-worker-cv = "captcha.services.worker_cv.cli:main"
 captcha-worker-protocol = "captcha.services.worker_protocol.cli:main"
-captcha-worker-browser = "captcha.services.worker_browser.cli:main"
-captcha-canary = "captcha.services.canary.cli:main"
-captcha-admin = "captcha.services.admin.cli:main"
-captcha-pipeline = "captcha.services.pipeline.cli:main"
+captcha-cli = "captcha.services.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -99,6 +97,29 @@ quote-style = "double"
 [tool.mypy]
 python_version = "3.14"
 mypy_path = "src"
+# Needed for pydantic field aliases: without it `error_id=...` on a model whose
+# field is aliased to `errorId` looks like a wrong keyword argument.
+plugins = ["pydantic.mypy"]
+
+# Optional extras are not installed in the base venv (cv, browser, heavy ML).
+# Their absence is a supported state, not a type error.
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "torchvision.*",
+    "cv2",
+    "transformers.*",
+    "simpleeval",
+    "ultralytics.*",
+    "whisper.*",
+    "faster_whisper.*",
+    "paddleocr.*",
+    "mini_racer.*",
+    "peft.*",
+    "safetensors.*",
+    "numpy.*",
+]
+ignore_missing_imports = true
 packages = ["captcha"]
 strict = false
 warn_unused_ignores = true

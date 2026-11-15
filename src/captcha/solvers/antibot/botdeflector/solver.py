@@ -26,7 +26,7 @@ class BotDeflectorSolver(AntibotBase):
         name="botdeflector",
         types=(CaptchaType.BOTDEFLECTOR,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )

@@ -28,7 +28,7 @@ class SliderSolver(Solver):
             CaptchaType.DATADOME_SLIDER,
         ),
         http=True,
-        browser=False,
+
         needs_js_runtime=False,
         needs_gpu=False,
         experimental=False,

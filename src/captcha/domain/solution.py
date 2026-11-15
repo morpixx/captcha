@@ -19,8 +19,10 @@ Rules:
   - Abstract geometry types (slider/rotate/click/grid/bbox/draw/drag) have no single
     2captcha shape — every engine invents its own. Those are our own stable keys,
     documented in README.
-  - Unknown type falls back to every non-null field we have, so a new CaptchaType
-    keeps working before its projection is written.
+  - The type's `SolutionKind` comes from `captcha.domain.catalog` — add a new type
+    there, not in a frozenset here.
+  - Unknown kind (new enum value not yet in the catalog) falls back to every
+    non-null field, so a half-added type keeps working.
 """
 
 from __future__ import annotations
@@ -30,109 +32,10 @@ from urllib.parse import urlparse
 
 import structlog
 
+from captcha.domain.catalog import SolutionKind, solution_kind
 from captcha.domain.enums import CaptchaType
 
 log = structlog.get_logger(__name__)
-
-# ---- families ---------------------------------------------------------------
-
-# Text-like answers: {"text": "abc"}
-_TEXT_TYPES: frozenset[CaptchaType] = frozenset(
-    {
-        CaptchaType.TEXT,
-        CaptchaType.MATH_IMAGE,
-        CaptchaType.IMAGE_TO_TEXT,
-        CaptchaType.AUDIO,
-    }
-)
-
-# Google: {"gRecaptchaResponse": "..."} (+ userAgent/cookies when the engine returns them)
-_RECAPTCHA_TYPES: frozenset[CaptchaType] = frozenset(
-    {
-        CaptchaType.RECAPTCHA_V2,
-        CaptchaType.RECAPTCHA_V2_ENTERPRISE,
-        CaptchaType.RECAPTCHA_V2_INVISIBLE,
-        CaptchaType.RECAPTCHA_V2_CALLBACK,
-        CaptchaType.RECAPTCHA_V3,
-        CaptchaType.RECAPTCHA_V3_ENTERPRISE,
-    }
-)
-
-# hCaptcha reuses the Google key and adds respKey + userAgent.
-_HCAPTCHA_TYPES: frozenset[CaptchaType] = frozenset({CaptchaType.HCAPTCHA, CaptchaType.HCAPTCHA_ENTERPRISE})
-
-# Turnstile: {"token", "userAgent"}
-_TURNSTILE_TYPES: frozenset[CaptchaType] = frozenset({CaptchaType.TURNSTILE, CaptchaType.TURNSTILE_INVISIBLE})
-
-# Plain token with an optional UA: Arkose, MTCaptcha, Prosopo, Yidun, Binance, VK,
-# Yandex SmartCaptcha, CaptchaFox, Cutcaptcha, KeyCaptcha, Capy, Lemin, atbCAPTCHA,
-# Twitch integrity, BotGuard, BotDeflector, CyberSiARA.
-_TOKEN_TYPES: frozenset[CaptchaType] = frozenset(
-    {
-        CaptchaType.FUNCAPTCHA,
-        CaptchaType.FUNCAPTCHA_BDA,
-        CaptchaType.FUNCAPTCHA_ENTERPRISE,
-        CaptchaType.MTCAPTCHA,
-        CaptchaType.PROSOPO,
-        CaptchaType.YIDUN,
-        CaptchaType.BINANCE,
-        CaptchaType.VK,
-        CaptchaType.YANDEX,
-        CaptchaType.CAPTCHAFOX,
-        CaptchaType.CUTCAPTCHA,
-        CaptchaType.KEYCAPTCHA,
-        CaptchaType.CAPY,
-        CaptchaType.LEMIN,
-        CaptchaType.ATBCAPTCHA,
-        CaptchaType.TWITCH_INTEGRITY,
-        CaptchaType.BOTGUARD,
-        CaptchaType.BOTDEFLECTOR,
-        CaptchaType.CYBERSIARA,
-    }
-)
-
-# Engines that hand back a cookie jar instead of a token.
-_COOKIE_TYPES: frozenset[CaptchaType] = frozenset(
-    {
-        CaptchaType.DATADOME_FULL,
-        CaptchaType.DATADOME_SLIDER,
-        CaptchaType.AKAMAI_SENSOR,
-        CaptchaType.AKAMAI_SBSD,
-        CaptchaType.KASADA,
-        CaptchaType.PERIMETERX,
-        CaptchaType.IMPERVA,
-        CaptchaType.TSPD,
-        CaptchaType.TEMU,
-    }
-)
-
-# Engines whose answer is nested under `data` (and sometimes a headers block):
-# Hunt, Castle, Basilisk, Alibaba, Tencent TenDI.
-_DATA_TYPES: frozenset[CaptchaType] = frozenset(
-    {
-        CaptchaType.HUNT,
-        CaptchaType.CASTLE,
-        CaptchaType.BASILISK,
-        CaptchaType.ALIBABA,
-        CaptchaType.TENCENT,
-    }
-)
-
-_GEETEST_V3: frozenset[CaptchaType] = frozenset({CaptchaType.GEETEST_V3})
-_GEETEST_V4: frozenset[CaptchaType] = frozenset({CaptchaType.GEETEST_V4})
-
-# Abstract geometry — our own keys, no 2captcha standard exists.
-_GRID_TYPES: frozenset[CaptchaType] = frozenset({CaptchaType.CLASSIFICATION_GRID})
-_COORD_TYPES: frozenset[CaptchaType] = frozenset(
-    {
-        CaptchaType.CLICK,
-        CaptchaType.COORDINATES,
-        CaptchaType.DRAW_AROUND,
-        CaptchaType.DRAG_DROP,
-        # Shein is a "click the right tiles" task; the answer is click points.
-        CaptchaType.SHEIN,
-    }
-)
 
 _GENERIC_KEYS = ("token", "text", "coords", "offset", "angle", "bbox", "indices")
 
@@ -160,19 +63,19 @@ def build_solution(
         # Vendor-exact fields from the solver land first and are never overwritten.
         sol.update({k: v for k, v in extra.items() if v is not None})
 
-    ct = captcha_type
     token = result.get("token")
+    kind = solution_kind(captcha_type)
 
-    if ct in _TEXT_TYPES:
+    if kind is SolutionKind.TEXT:
         _put(sol, "text", result.get("text"))
-    elif ct in _RECAPTCHA_TYPES:
+    elif kind is SolutionKind.RECAPTCHA:
         _put(sol, "gRecaptchaResponse", token)
         _put(sol, "userAgent", _ua(sol, result))
-    elif ct in _HCAPTCHA_TYPES:
+    elif kind is SolutionKind.HCAPTCHA:
         _put(sol, "gRecaptchaResponse", token)
         _put(sol, "respKey", _first(sol, "respKey", "resp_key"))
         _put(sol, "userAgent", _ua(sol, result))
-    elif ct in _GEETEST_V3:
+    elif kind is SolutionKind.GEETEST_V3:
         # challenge/validate identify the round, seccode is validate + "|jordan".
         _put(sol, "challenge", _first(sol, "challenge", "gt_challenge"))
         _put(sol, "validate", _first(sol, "validate"))
@@ -180,13 +83,13 @@ def build_solution(
         if seccode is None and sol.get("validate"):
             seccode = f"{sol['validate']}|jordan"
         _put(sol, "seccode", seccode)
-    elif ct in _GEETEST_V4:
+    elif kind is SolutionKind.GEETEST_V4:
         for key in ("captcha_id", "lot_number", "pass_token", "gen_time", "captcha_output"):
             _put(sol, key, _first(sol, key))
-    elif ct in _TURNSTILE_TYPES:
+    elif kind is SolutionKind.TURNSTILE:
         _put(sol, "token", token)
         _put(sol, "userAgent", _ua(sol, result))
-    elif ct is CaptchaType.CF_CHALLENGE:
+    elif kind is SolutionKind.CLOUDFLARE:
         cookies = _cookies(sol)
         clearance = _first(sol, "cf_clearance") or cookies.get("cf_clearance") or token
         _put(sol, "cf_clearance", clearance)
@@ -194,9 +97,9 @@ def build_solution(
         _put(sol, "userAgent", _ua(sol, result))
         if cookies:
             _put(sol, "cookies", cookies)
-    elif ct is CaptchaType.FRIENDLY:
+    elif kind is SolutionKind.FRIENDLY:
         _put(sol, "data", {"token": token} if token else _first(sol, "data"))
-    elif ct is CaptchaType.ALTCHA:
+    elif kind is SolutionKind.ALTCHA:
         data = _first(sol, "data")
         if not data and token:
             data = {"token": token}
@@ -204,27 +107,29 @@ def build_solution(
             if number is not None:
                 data["number"] = number
         _put(sol, "data", data)
-    elif ct in _COOKIE_TYPES:
-        _cookie_solution(sol, ct, result, site_url=site_url)
-    elif ct is CaptchaType.AWSWAF:
+    elif kind is SolutionKind.COOKIE_ENGINE:
+        _cookie_solution(sol, captcha_type, result, site_url=site_url)
+    elif kind is SolutionKind.AWSWAF:
         _awswaf_solution(sol, result)
-    elif ct in _DATA_TYPES:
-        _data_solution(sol, ct, token, result)
-    elif ct in _GRID_TYPES:
+    elif kind is SolutionKind.DATA_NEST:
+        _data_solution(sol, captcha_type, token, result)
+    elif kind is SolutionKind.GRID:
         _put(sol, "objects", result.get("indices"))
-    elif ct in _COORD_TYPES:
+    elif kind is SolutionKind.COORDS:
         _put(sol, "coordinates", result.get("coords"))
-    elif ct is CaptchaType.BOUNDING_BOX:
+    elif kind is SolutionKind.BBOX:
         _put(sol, "bbox", list(result["bbox"]) if result.get("bbox") else None)
-    elif ct is CaptchaType.ROTATE:
+    elif kind is SolutionKind.ROTATE:
         _put(sol, "angle", result.get("angle"))
-    elif ct is CaptchaType.SLIDER:
+    elif kind is SolutionKind.SLIDER:
         _put(sol, "offset", result.get("offset"))
-    elif ct in _TOKEN_TYPES:
+    elif kind is SolutionKind.TOKEN:
         _put(sol, "token", token)
         _put(sol, "userAgent", _ua(sol, result))
     else:
-        log.warning("solution.unmapped_type", type=getattr(ct, "value", str(ct)))
+        # Type absent from the catalog (half-added enum value). Hand back every
+        # non-null generic field so the client sees something rather than nothing.
+        log.warning("solution.unmapped_type", type=getattr(captcha_type, "value", str(captcha_type)))
         _generic(sol, result)
 
     # Bookkeeping knobs a solver passes in `extra` are not part of the answer.

@@ -26,7 +26,7 @@ class PerimeterXSolver(AntibotBase):
         name="perimeterx",
         types=(CaptchaType.PERIMETERX,),
         http=True,
-        browser=False,
+
         needs_js_runtime=True,
         experimental=True,
     )
