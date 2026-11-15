@@ -1,0 +1,37 @@
+# Ephemeral Redis + Postgres for the integration suite.
+#
+#   docker compose -f tests/integration/docker-compose.yml up -d --wait
+#   make test-integration
+#
+# Ports are the defaults tests/integration/conftest.py expects. If 6379/5432 are
+# already taken by the dev stack, either stop it or point the suite elsewhere:
+#   INTEGRATION_REDIS_URL=redis://127.0.0.1:16379/15
+#   INTEGRATION_POSTGRES_URL=postgresql+asyncpg://captcha:captcha@127.0.0.1:15432/captcha_it
+name: captcha-integration
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: captcha
+      POSTGRES_PASSWORD: captcha
+      POSTGRES_DB: captcha_it
+    ports: ["5432:5432"]
+    # Throwaway storage: every `up` starts from an empty database and the
+    # migrations fixture brings it to head.
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U captcha -d captcha_it"]
+      interval: 2s
+      timeout: 1s
+      retries: 30

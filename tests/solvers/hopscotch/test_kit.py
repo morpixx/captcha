@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import release_payload
 from ml.hopscotch.dataset import (
     load_dataset,
     merge_sources,
@@ -29,6 +28,7 @@ from ml.hopscotch.split import import_upstream_roles
 from ml.hopscotch.train import train_plan
 
 from captcha.domain.errors import ConfigError
+from conftest import release_payload
 
 # ---- synthetic sources ------------------------------------------------------
 
