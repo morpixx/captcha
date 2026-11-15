@@ -1,0 +1,13 @@
+{
+  "name": "altcha_v1_sha512_canary",
+  "type": "altcha",
+  "payload": {
+    "algorithm": "SHA-512",
+    "challenge": "352b1f02812b458a8cc9c9cdf3663317d763777ac2ebbfeb13a25b0bdc2608704b9e1300e620f27825b9abac050e1b60e366f4fbdbc398c8a7fcc73a244e40eb",
+    "maxnumber": 250000,
+    "salt": "canary-salt-512&",
+    "signature": "b490c42ded6a834d2850f104ce4601dd9dfcb9575201e337c8fbb9adf0b17ec6",
+    "pageurl": "https://example.com/login"
+  },
+  "note": "altcha-lib v1 SHA-512, answer 31337, maxnumber 250000."
+}

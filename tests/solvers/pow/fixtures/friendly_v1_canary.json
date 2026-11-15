@@ -1,0 +1,10 @@
+{
+  "name": "friendly_v1_canary",
+  "type": "friendly_captcha",
+  "payload": {
+    "puzzle": "canary-friendly-v1.avkHfwAAAAAAAAAAAQAFLAAAAAAAAAAAquifwPA+KVk=",
+    "sitekey": "FCMGEMUD2M567T8G",
+    "websiteURL": "https://example.com/login"
+  },
+  "note": "friendly-pow v1: 32-byte buffer, 5 solutions, difficulty 44. Synthetic; the solution is verified by recomputing blake2b-256."
+}
