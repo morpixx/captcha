@@ -186,7 +186,9 @@ envelope-ом `ERROR_NO_SLOT_AVAILABLE` прямо в gateway.
 Новых эндпоинтов и полей нет. Для клиента задача hCaptcha выглядит так же; меняется только
 время ответа и то, кто её решает:
 
-- `hcaptcha` и `hcaptcha_enterprise` по каталогу живут в лейне `browser`;
+- `hcaptcha` и `hcaptcha_enterprise` по каталогу живут в лейне `browser`; там же
+  `prosopo`, `captchafox` и `yandex` — их токен собирается внутри виджета и HTTP-пути
+  у него нет, `solve_http` для них сразу поднимает `ERR_NEEDS_BROWSER`;
 - HTTP-солвер, упёршийся в отпечаток, бросает `ERR_NEEDS_BROWSER`, воркер перекладывает
   задачу в браузерный лейн и ack-ает исходное сообщение. Клиент этого не видит: статус
   остаётся `processing`, списание не меняется;
