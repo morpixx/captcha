@@ -1,0 +1,12 @@
+{
+  "name": "friendly_captcha_v1",
+  "task": {
+    "type": "friendly_captcha",
+    "puzzle": "canary-friendly-v1.avkHfwAAAAAAAAAAAQAFLAAAAAAAAAAAquifwPA+KVk="
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["data"]
+  },
+  "note": "friendly-pow v1: 32-byte buffer, 5 solutions, difficulty 44, no expiry. Synthetic; no live site."
+}

@@ -52,6 +52,7 @@ from captcha.solvers import Solver, SolverContext, SolverRegistry
 from .concurrency import ConcurrencyLimiter
 from .context import WorkerContextBundle
 from .escalation import escalate_to_browser
+from .heartbeat import HttpLaneHeartbeat
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -79,6 +80,7 @@ class Worker:
         producer: Producer | None = None,
         consumer: Consumer | None = None,
         pingback: PingbackSender | None = None,
+        heartbeat: HttpLaneHeartbeat | None = None,
         consumer_count: int = 16,
         block_ms: int = 5_000,
         max_retries: int = 3,
@@ -106,12 +108,28 @@ class Worker:
         # The HTTP lane needs a producer only for escalation, but it shares the
         # process-wide lane streams so the prefix must match the consumer.
         self._producer = producer or Producer(redis, prefix=settings.redis_stream_prefix)
+        self._heartbeat = heartbeat or HttpLaneHeartbeat(
+            redis,
+            worker_id=worker_id,
+            prefix=settings.redis_stream_prefix,
+            types=self._http_capabilities(),
+        )
 
         self._instances: dict[str, Solver] = {}
         self._running = asyncio.Event()
         self._inflight: set[asyncio.Task[None]] = set()
 
     # ---------------------------------------------------------------- lifecycle
+
+    def _http_capabilities(self) -> tuple[CaptchaType, ...]:
+        """Types this worker can actually pick on the HTTP lane.
+
+        Advertised in captcha:cap:http so the gateway gates sales on a live
+        worker, not on a solver being merely importable. A browser-only solver
+        is excluded: solve_http on it is the base-class "not supported" error.
+        """
+        types = {ct for cls in self._registry.all_solvers() if cls.info.http for ct in cls.info.types}
+        return tuple(sorted(types, key=lambda ct: ct.value))
 
     async def ensure_group(self) -> None:
         await self._consumer.ensure_group()
@@ -148,6 +166,7 @@ class Worker:
     async def shutdown(self) -> None:
         """Signal the loop to stop, wait on in-flight, teardown solvers."""
         self._running.clear()
+        await self._heartbeat.stop()
         if self._inflight:
             await asyncio.gather(*self._inflight, return_exceptions=True)
         for name, inst in list(self._instances.items()):
@@ -161,6 +180,7 @@ class Worker:
         self._running.set()
         self._log.info("worker.start", lane=_LANE)
         metrics.active_tasks.labels(lane=_LANE).inc(0)  # register label
+        await self._heartbeat.start()
 
         while self._running.is_set():
             try:
@@ -171,6 +191,7 @@ class Worker:
                 self._log.error("consumer.read_failed", error=str(exc), exc_info=True)
                 await asyncio.sleep(0.5)
                 continue
+            await self._refresh_queue_depth()
 
             for msg_id, envelope in batch:
                 t = asyncio.create_task(self._run_one(msg_id, envelope))
@@ -178,6 +199,43 @@ class Worker:
                 t.add_done_callback(self._inflight.discard)
 
         self._log.info("worker.stop", lane=_LANE)
+
+    async def _refresh_queue_depth(self) -> None:
+        """Publish the lane backlog on every read pass (contract §10).
+
+        Depth is the consumer group's lag: entries appended but not delivered
+        yet. XLEN would count entries that were acked long ago (XACK does not
+        remove them), so it is only the fallback for a Redis without lag.
+        Best-effort: a Redis hiccup must not stop the consumer loop.
+        """
+        try:
+            depth = await self._read_queue_depth()
+        except Exception:
+            return  # metric collection never blocks the loop
+        if depth is None:
+            return
+        metrics.queue_depth.labels(lane=_LANE).set(depth)
+
+    async def _read_queue_depth(self) -> int | None:
+        stream = self._consumer.stream
+        try:
+            groups = await self._r.xinfo_groups(stream)
+        except Exception:
+            groups = []
+        for info in groups:
+            name = info.get("name", info.get(b"name"))
+            if isinstance(name, bytes):
+                name = name.decode("utf-8", "replace")
+            if name != self._consumer.group:
+                continue
+            lag = info.get("lag", info.get(b"lag"))
+            if lag is not None:
+                return max(0, int(lag))
+            break
+        try:
+            return int(await self._r.xlen(stream))
+        except Exception:
+            return None
 
     # ---------------------------------------------------------------- one task
 
@@ -267,6 +325,7 @@ class Worker:
         )
         await self._send_pingback(task, TaskStatus.READY, result=result, error=None, log=log)
 
+        metrics.tasks_total.labels(type=type_.value, lane=_LANE, status=TaskStatus.READY.value).inc()
         metrics.tasks_done_total.labels(
             type=type_.value,
             status=TaskStatus.READY.value,
@@ -360,6 +419,7 @@ class Worker:
                 refund=True,
             )
             await self._send_pingback(task, TaskStatus.FAILED, result=None, error=err_dict, log=log)
+            metrics.tasks_total.labels(type=type_val, lane=_LANE, status=TaskStatus.FAILED.value).inc()
             metrics.tasks_done_total.labels(
                 type=type_val,
                 status=TaskStatus.FAILED.value,
@@ -384,6 +444,7 @@ class Worker:
                 refund=True,
             )
             await self._send_pingback(task, TaskStatus.FAILED, result=None, error=err_dict, log=log)
+            metrics.tasks_total.labels(type=type_val, lane=_LANE, status=TaskStatus.FAILED.value).inc()
             metrics.tasks_done_total.labels(
                 type=type_val,
                 status=TaskStatus.FAILED.value,
