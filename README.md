@@ -30,7 +30,7 @@ GET  /account        ->  кабинет: баланс, леджер, попол�
 | HTTP → browser escalation (`ERR_NEEDS_BROWSER`, один прыжок) | работает |
 | capabilities/heartbeat, `/readyz` с проверкой лейнов | работает: типы `browser` и browser-gated (`needs_browser`) продаются только при свежем heartbeat браузерного лейна, остальные — из реестра (`docs/architecture.md`) |
 | canary: фикстуры, type health, webhook | работает; фикстуры есть на 10 типов из 62 (`tests/canary/fixtures`) |
-| `ALLOW_EXPERIMENTAL_TASKS` — гейт experimental-типов (§7) | реализован; в beta по умолчанию `1`, контракт требует `0` в проде |
+| `ALLOW_EXPERIMENTAL_TASKS` — гейт experimental-типов (§7) | по умолчанию `0`: experimental-only типы не продаются; `1` — явный beta-оверрайд |
 | api-key hash at rest (HMAC-SHA256 + pepper), квоты, redaction | работает |
 | netguard (SSRF-проверка клиентских URL) | работает: gateway (`validate_task_urls` до списания), transport (`guard.py`/`redirects.py` на каждом hop) и навигация browser-лейна; тесты — `tests/gateway/test_netguard_urls.py`, `tests/adapters/test_netguard*.py` |
 | транспорт curl_cffi, JA3-профили, JS-песочница, пул прокси, реестр весов | работает |
