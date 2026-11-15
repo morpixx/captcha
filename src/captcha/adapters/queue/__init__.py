@@ -11,6 +11,7 @@ from .capabilities import (
     gateway_ready,
     heartbeat_key,
 )
+from .heartbeat import REFRESH_INTERVAL_SEC, LaneHeartbeat
 from .keys import (
     LANES,
     Lane,
@@ -28,9 +29,11 @@ StreamName = str
 __all__ = [
     "HEARTBEAT_TTL_SECONDS",
     "LANES",
+    "REFRESH_INTERVAL_SEC",
     "CapabilityRegistry",
     "Consumer",
     "Lane",
+    "LaneHeartbeat",
     "Producer",
     "StreamName",
     "TaskStateStore",
