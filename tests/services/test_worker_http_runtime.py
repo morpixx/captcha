@@ -323,7 +323,9 @@ async def test_lost_beat_does_not_raise() -> None:
 def test_http_capabilities_exclude_browser_only_solvers() -> None:
     worker = _worker(registry=_registry(HttpOk, BrowserOnly), redis=FakeRedis())
 
-    assert worker._heartbeat.types == ("turnstile",)
+    # turnstile has an HTTP probe but is browser-gated (`needs_browser`), so an
+    # HTTP worker must not advertise it as sellable.
+    assert worker._heartbeat.types == ()
 
 
 # -------------------------------------------------------------------- worker run
