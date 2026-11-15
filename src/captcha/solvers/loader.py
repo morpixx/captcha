@@ -53,6 +53,8 @@ SOLVERS: tuple[str, ...] = (
     "captcha.solvers.funcaptcha.bda:FunCaptchaBDASolver",
     "captcha.solvers.funcaptcha.funcaptcha:FunCaptchaEnterpriseSolver",
     "captcha.solvers.funcaptcha.funcaptcha:FunCaptchaSolver",
+    # hcaptcha (browser fallback; the grid classifier above serves the same types)
+    "captcha.solvers.hcaptcha.browser:HCaptchaBrowserSolver",
     # interactive
     "captcha.solvers.interactive.alibaba.solver:AlibabaSolver",
     "captcha.solvers.interactive.atbcaptcha.solver:AtbCaptchaSolver",
