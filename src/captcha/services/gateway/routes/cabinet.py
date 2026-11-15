@@ -50,6 +50,16 @@ async def current_account(
     return await authenticate(x_client_key or "", session)
 
 
+def _display_key_tail(account: Account) -> str:
+    """Stored tail when present. The plaintext fallback covers rows seeded before
+    0004 and test doubles that only carry `api_key`."""
+    tail = getattr(account, "key_tail", None) or ""
+    if not tail:
+        raw = getattr(account, "api_key", None) or ""
+        tail = raw[-4:] if raw else ""
+    return f"…{tail}" if tail else ""
+
+
 @router.get("", response_model=None)
 async def get_account(
     account: Account = Depends(current_account),
@@ -59,7 +69,7 @@ async def get_account(
         balance=float(account.balance),
         disabled=account.disabled,
         created_at=account.created_at.isoformat() if account.created_at else None,
-        key_tail=f"…{account.api_key[-4:]}" if account.api_key else "",
+        key_tail=_display_key_tail(account),
     )
     return ORJSONResponse(resp.model_dump(by_alias=True, exclude_none=True))
 

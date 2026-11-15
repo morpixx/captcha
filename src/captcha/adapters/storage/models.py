@@ -32,7 +32,13 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    api_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    #: Plaintext key is never stored: populated only by pre-0004 rows until the
+    #: migration nulls them. Lookups go through `api_key_hash`.
+    api_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: HMAC-SHA256(pepper, key), hex. Unique so one key belongs to one account.
+    api_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    #: Last four characters, for display only.
+    key_tail: Mapped[str] = mapped_column(String(8), nullable=False, default="", server_default="")
     name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     balance: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"), server_default="0")
     disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

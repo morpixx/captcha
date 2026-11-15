@@ -63,7 +63,9 @@ def cmd_create_account(args: argparse.Namespace) -> int:
 
     account = asyncio.run(_with_repo(run))
     print(f"account  {account.id}")
-    print(f"key      {account.api_key}")
+    # The repo stores only the hash, so the key is printed from the value this
+    # process generated. It cannot be recovered later.
+    print(f"key      {api_key}")
     print(f"balance  {account.balance}")
     return 0
 
@@ -96,15 +98,15 @@ def cmd_list_accounts(_args: argparse.Namespace) -> int:
     async def run(_repo: AccountRepo):
         async with async_session() as session:
             rows = (await session.execute(select(Account).order_by(Account.created_at))).scalars().all()
-            return [(a.id, a.api_key, a.name, a.balance, a.disabled) for a in rows]
+            return [(a.id, a.key_tail, a.name, a.balance, a.disabled) for a in rows]
 
     rows = asyncio.run(_with_repo(run))
     if not rows:
         print("no accounts — run: create-account --name demo --balance 10")
         return 0
-    for acc_id, key, name, balance, disabled in rows:
+    for acc_id, tail, name, balance, disabled in rows:
         flag = " (disabled)" if disabled else ""
-        print(f"{acc_id}  {key}  {name or '-'}  {balance}{flag}")
+        print(f"{acc_id}  …{tail}  {name or '-'}  {balance}{flag}")
     return 0
 
 
