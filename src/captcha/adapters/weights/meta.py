@@ -27,7 +27,7 @@ class ModelMeta(msgspec.Struct, frozen=True, kw_only=True):
     input_schema: dict[str, Any] = msgspec.field(default_factory=dict)
     output_schema: dict[str, Any] = msgspec.field(default_factory=dict)
     canary_rollout: float = 0.0  # 0.0 = disabled, 1.0 = full
-    labels: dict[str, str] = msgspec.field(default_factory=dict)
+    labels: dict[str, Any] = msgspec.field(default_factory=dict)
     created_at: str = ""  # ISO-8601, informational
 
 

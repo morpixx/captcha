@@ -22,8 +22,10 @@ from fastapi.responses import ORJSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from captcha.adapters.queue import Producer, TaskStateStore
+from captcha.adapters.queue.capabilities import gateway_live_types
 from captcha.adapters.storage import init_engine, shutdown_engine
 from captcha.config import Settings, get_settings
+from captcha.domain.catalog import lane_for
 from captcha.domain.enums import CaptchaType
 from captcha.observability.logging import setup_logging
 from captcha.services.gateway.errors import validation_error_handler
@@ -49,8 +51,20 @@ async def build_state(settings: Settings) -> AppState:
     state_store = TaskStateStore(redis, prefix=settings.redis_stream_prefix)
     producer = Producer(redis, prefix=settings.redis_stream_prefix)
     sm = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
-    solver_types = _load_solver_types()
-    _log.info("gateway.solvers", count=len(solver_types))
+    registry_types = _load_solver_types()
+    try:
+        live_types = await gateway_live_types(redis, prefix=settings.redis_stream_prefix)
+    except Exception as exc:
+        # A Redis hiccup must not silently make the gateway sell unsolvable work.
+        _log.warning("gateway.capabilities_failed", error=str(exc))
+        live_types = frozenset()
+    solver_types = _available_types(registry_types, live_types)
+    _log.info(
+        "gateway.solvers",
+        count=len(solver_types),
+        registry=len(registry_types),
+        live=len(live_types),
+    )
     return AppState(
         settings=settings,
         redis=redis,
@@ -60,6 +74,20 @@ async def build_state(settings: Settings) -> AppState:
         producer=producer,
         solver_types=solver_types,
     )
+
+
+def _available_types(
+    registry_types: frozenset[CaptchaType],
+    live_types: frozenset[CaptchaType],
+) -> frozenset[CaptchaType]:
+    """Types the gateway may sell right now.
+
+    A browser-lane type is only sellable with a fresh browser-worker heartbeat:
+    a registered solver is not proof that the expensive lane is up. Everything
+    else keeps the registry as the source of truth.
+    """
+    browser_lane = {ct for ct in CaptchaType if lane_for(ct) == "browser"}
+    return frozenset((registry_types - browser_lane) | live_types)
 
 
 def _load_solver_types() -> frozenset[CaptchaType]:
