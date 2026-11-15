@@ -53,6 +53,8 @@ SOLVERS: tuple[str, ...] = (
     "captcha.solvers.funcaptcha.bda:FunCaptchaBDASolver",
     "captcha.solvers.funcaptcha.funcaptcha:FunCaptchaEnterpriseSolver",
     "captcha.solvers.funcaptcha.funcaptcha:FunCaptchaSolver",
+    # hopscotch (custom type, not one of the 62 vendor types)
+    "captcha.solvers.hopscotch.solver:HopscotchSolver",
     # interactive
     "captcha.solvers.interactive.alibaba.solver:AlibabaSolver",
     "captcha.solvers.interactive.atbcaptcha.solver:AtbCaptchaSolver",
