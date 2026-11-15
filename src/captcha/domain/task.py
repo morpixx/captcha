@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 import msgspec
 
 from captcha.domain.enums import CaptchaType, Priority, SolveMode, TaskStatus
+from captcha.domain.errors import UnsolvableError
+
+#: How many times one task may be moved between lanes. One hop: an HTTP solver
+#: may ask for the browser lane once; a second request is a dead end.
+MAX_LANE_HOPS: Final[int] = 1
 
 
 class Task(msgspec.Struct, frozen=True, kw_only=True):
@@ -43,6 +48,25 @@ class TaskEnvelope(msgspec.Struct, kw_only=True):
     finished_at: float | None = None
     worker_id: str | None = None
     retries: int = 0
+    #: Lane moves already spent on this task. Capped by `MAX_LANE_HOPS`; the
+    #: value travels with the whole envelope through msgpack, requeue and DLQ.
+    lane_hops: int = 0
+
+    def escalated(self) -> TaskEnvelope:
+        """Return a copy that spent one lane hop (http -> browser).
+
+        Raises `UnsolvableError` when the envelope already used its single hop:
+        a second `NeedsBrowserError` is structural, not a retry.
+        """
+        if self.lane_hops >= MAX_LANE_HOPS:
+            raise UnsolvableError(
+                "lane escalation budget exhausted",
+                context={
+                    "type": self.task.type.value,
+                    "lane_hops": self.lane_hops,
+                },
+            )
+        return msgspec.structs.replace(self, lane_hops=self.lane_hops + 1)
 
 
 class SolverResult(msgspec.Struct, kw_only=True):

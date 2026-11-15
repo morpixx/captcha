@@ -35,6 +35,17 @@ class ProxyError(CaptchaError):
     code = "ERR_PROXY"
 
 
+class NeedsBrowserError(CaptchaError):
+    """HTTP solver cannot finish in-process; the task belongs in the browser lane.
+
+    Non-terminal by itself: the HTTP worker moves the envelope to the `browser`
+    stream, acks the source entry and leaves billing untouched. Only a second
+    hop past `TaskEnvelope.lane_hops` becomes terminal `ERR_UNSOLVABLE`.
+    """
+
+    code = "ERR_NEEDS_BROWSER"
+
+
 class SensorError(CaptchaError):
     """Sensor payload rejected by remote. Usually means schema drifted."""
 

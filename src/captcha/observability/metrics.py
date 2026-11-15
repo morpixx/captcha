@@ -74,6 +74,13 @@ solver_errors_total: Final[Counter] = Counter(
     registry=REGISTRY,
 )
 
+escalations_total: Final[Counter] = Counter(
+    "captcha_escalations_total",
+    "HTTP-lane tasks rerouted to the browser lane after ERR_NEEDS_BROWSER.",
+    labelnames=("type",),
+    registry=REGISTRY,
+)
+
 proxy_bans_total: Final[Counter] = Counter(
     "captcha_proxy_bans_total",
     "Proxy IPs / sessions marked bad by the pool.",
