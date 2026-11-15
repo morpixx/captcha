@@ -1,6 +1,6 @@
 """captcha-worker-browser — browser-lane solver worker.
 
-Per-task `BrowserProvider` sessions from `ctx.browser`; no shared context pool.
+Per-task `CamoufoxProvider` sessions from `ctx.browser`; no shared context pool.
 See `docs/production-contract.md` §2–§4.
 """
 
@@ -16,8 +16,8 @@ from .limits import (
     MIN_TIMEOUT_SEC,
     clamp_timeout,
 )
-from .provider import PoolProvider, close_provider, resolve_provider, start_provider
-from .supervisor import ProcessSupervisor, TrackingProvider
+from .provider import close_provider, resolve_provider
+from .tracking import SessionTracker, TrackingProvider
 from .worker import Worker
 
 __all__ = [
@@ -28,8 +28,7 @@ __all__ = [
     "MIN_TIMEOUT_SEC",
     "ConcurrencyGate",
     "LaneHeartbeat",
-    "PoolProvider",
-    "ProcessSupervisor",
+    "SessionTracker",
     "TrackingProvider",
     "Worker",
     "cap_key",
@@ -38,5 +37,4 @@ __all__ = [
     "free_memory_mb",
     "lane_key",
     "resolve_provider",
-    "start_provider",
 ]

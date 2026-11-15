@@ -2,19 +2,20 @@
 
 Contract surface (docs/production-contract.md §2–§4):
 
-* **Per-task provider, no shared pool.** A solver gets `ctx.browser` — a
-  `BrowserProvider` — and opens one fresh session per task. The worker owns no
-  process-wide context pool; `resolve_provider()` builds the provider once per
-  process (see `cli.py`) and this class only wraps it for pid tracking.
-* **Concurrency.** `WORKER_BROWSER_SESSIONS` (12) sessions, ramped up from
-  `WORKER_BROWSER_RAMP_START` while free RAM stays above
+* **Per-task provider, no shared pool.** A solver gets `ctx.browser` —
+  `adapters.browser.provider.CamoufoxProvider` — and opens one fresh Camoufox
+  session per task. The worker owns no browser and no context pool;
+  `resolve_provider()` builds the provider once per process (see `cli.py`).
+* **Concurrency.** `WORKER_BROWSER_SESSIONS` (12) sessions per process, ramped
+  up from `WORKER_BROWSER_RAMP_START` while free RAM stays above
   `WORKER_BROWSER_MIN_FREE_MB` (`gate.ConcurrencyGate`).
 * **Hard timeout.** 180–300 s per task (`limits.clamp_timeout`), enforced by
-  `runner.TaskRunner` including the process-tree kill.
+  `runner.TaskRunner`, which kills the task's process tree.
 * **Heartbeat.** `SETEX captcha:lane:browser:<worker> 90 1`, `SADD
-  captcha:cap:browser <types>` (`heartbeat.LaneHeartbeat`).
+  captcha:cap:browser <types>` (`heartbeat.LaneHeartbeat` over
+  `adapters/queue/capabilities`).
 * **Graceful drain.** SIGINT/SIGTERM stops reads, in-flight tasks finish, then
-  every remaining session is killed and stale profiles are reaped.
+  every remaining session is killed through the provider's supervisor.
 
 Per task only `solve_browser` runs; `ERR_NEEDS_BROWSER` is terminal here.
 """
@@ -44,9 +45,9 @@ from captcha.solvers.registry import SolverRegistry, discover_solvers, global_re
 from .gate import ConcurrencyGate
 from .heartbeat import LaneHeartbeat
 from .limits import DEFAULT_CONCURRENCY, DEFAULT_TIMEOUT_SEC, LANE, clamp_timeout
-from .provider import close_provider, resolve_provider, start_provider
+from .provider import close_provider, resolve_provider
 from .runner import TaskRunner
-from .supervisor import ProcessSupervisor, TrackingProvider, current_label, task_label
+from .tracking import SessionTracker, TrackingProvider, bind_label, reset_label, task_label
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from redis.asyncio import Redis
@@ -75,7 +76,7 @@ class Worker:
         state: Any = None,
         heartbeat: Any = None,
         gate: ConcurrencyGate | None = None,
-        supervisor: ProcessSupervisor | None = None,
+        tracker: SessionTracker | None = None,
         timeout_sec: float | None = None,
         install_signals: bool = True,
     ) -> None:
@@ -87,7 +88,7 @@ class Worker:
         self._block_ms = block_ms
         self._max_retries = max_retries
         self._headless = headless
-        self._install_signals = install_signals
+        self._signals_enabled = install_signals
         # Explicit timeout is for tests/short-lived probes; settings are clamped
         # to the contract's 180–300 s window.
         self._hard_timeout = (
@@ -99,7 +100,7 @@ class Worker:
         self._min_free_mb = int(getattr(settings, "worker_browser_min_free_mb", 0) or 0)
         self._provider = provider
         self._owns_provider = provider is None
-        self._supervisor = supervisor
+        self._tracker = tracker
         self._stop = asyncio.Event()
         self._redis: Redis | None = None
         self._consumer = consumer
@@ -119,7 +120,7 @@ class Worker:
 
     async def run(self) -> None:
         await self._setup()
-        if self._install_signals:
+        if self._signals_enabled:
             self._install_signals()
         self._log.info(
             "worker.start",
@@ -157,12 +158,10 @@ class Worker:
 
         if self._provider is None:
             self._provider = resolve_provider(self.settings, headless=self._headless)
-            await start_provider(self._provider)
             self._log.info("browser.provider.started", provider=type(self._provider).__name__)
-
-        if self._supervisor is None:
-            self._supervisor = ProcessSupervisor()
-        tracked = TrackingProvider(self._provider, self._supervisor)
+        if self._tracker is None:
+            self._tracker = SessionTracker(self._provider)
+        tracked = TrackingProvider(self._provider, self._tracker)
 
         self._proxy_pool = _load_proxy_pool(self.settings, self._log)
         self._ctx = SolverContext(
@@ -191,7 +190,7 @@ class Worker:
             solvers=self._by_type,
             hard_timeout=self._hard_timeout,
             worker_id=self.worker_id,
-            supervisor=self._supervisor,
+            tracker=self._tracker,
             logger=self._log,
         )
 
@@ -300,7 +299,7 @@ class Worker:
 
     async def _run_one_slot(self, message_id: str, envelope: TaskEnvelope, label: str) -> None:
         assert self._runner is not None and self._gate is not None
-        token = current_label.set(label)
+        token = bind_label(label)
         ok = False
         try:
             ok = await self._runner.run(message_id, envelope, label)
@@ -313,7 +312,7 @@ class Worker:
                 type=envelope.task.type.value,
             )
         finally:
-            current_label.reset(token)
+            reset_label(token)
             self._gate.release(ok=ok)
 
     # ---- teardown ------------------------------------------------------
@@ -328,13 +327,11 @@ class Worker:
         for inst in list(self._instances.values()):
             with contextlib.suppress(Exception):
                 await inst.shutdown()
-        if self._supervisor is not None:
+        if self._tracker is not None:
             with contextlib.suppress(Exception):
-                killed = await self._supervisor.kill_all()
+                killed = await self._tracker.kill_all()
                 if killed:
                     self._log.warning("browser.sessions_killed", count=killed)
-            with contextlib.suppress(Exception):
-                self._supervisor.reap_profiles()
         if self._owns_provider and self._provider is not None:
             with contextlib.suppress(Exception):
                 await close_provider(self._provider)

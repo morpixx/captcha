@@ -192,7 +192,8 @@ class ConcurrencyGate:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # pragma: no cover - no loop means no waiters
             return
-        loop.call_soon(lambda: asyncio.ensure_future(self._notify()))
+        with contextlib.suppress(RuntimeError):  # loop may be closing under us
+            loop.call_soon(lambda: asyncio.ensure_future(self._notify()))
 
     async def _notify(self) -> None:
         async with self._cond:

@@ -22,7 +22,7 @@ from typing import Any
 import structlog
 
 from captcha.domain.enums import SolveMode, TaskStatus
-from captcha.domain.errors import CaptchaError, UnsolvableError
+from captcha.domain.errors import CaptchaError, NeedsBrowserError, UnsolvableError
 from captcha.domain.errors import TimeoutError as CaptchaTimeoutError
 from captcha.domain.task import Task, TaskEnvelope
 from captcha.observability import metrics
@@ -45,7 +45,7 @@ class TaskRunner:
         solvers: dict[Any, Solver],
         hard_timeout: float,
         worker_id: str,
-        supervisor: Any = None,
+        tracker: Any = None,
         logger: Any = None,
     ) -> None:
         self._state = state
@@ -54,7 +54,7 @@ class TaskRunner:
         self._solvers = solvers
         self._hard_timeout = hard_timeout
         self._worker_id = worker_id
-        self._supervisor = supervisor
+        self._tracker = tracker
         self._log = logger or log
 
     async def run(self, message_id: str, envelope: TaskEnvelope, label: str) -> bool:
@@ -92,10 +92,17 @@ class TaskRunner:
             except CaptchaError as exc:
                 terminal = exc.code in TERMINAL_CODES
                 err = exc
-                if exc.code == "ERR_NEEDS_BROWSER":
+                if isinstance(exc, NeedsBrowserError):
+                    # Contract §2: the hop budget is one; a browser-lane task
+                    # asking for the browser lane is a dead end, not a retry.
                     err = UnsolvableError(
                         "browser escalation requested inside the browser lane",
-                        context={"type": task.type.value, "lane": LANE, "cause": exc.message},
+                        context={
+                            "type": task.type.value,
+                            "lane": LANE,
+                            "lane_hops": getattr(envelope, "lane_hops", 0),
+                            "cause": exc.message,
+                        },
                     )
                 await self._handle_failure(message_id, envelope, err, terminal=terminal, log=log)
                 return False
@@ -147,8 +154,8 @@ class TaskRunner:
 
         solve_task.cancel()
         killed = 0
-        if self._supervisor is not None:
-            killed = await self._supervisor.kill_label(label)
+        if self._tracker is not None:
+            killed = await self._tracker.kill_label(label)
         self._log.error(
             "task.hard_timeout",
             task_id=str(task.id),

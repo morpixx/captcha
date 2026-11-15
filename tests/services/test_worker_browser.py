@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,17 +18,25 @@ from uuid import uuid4
 
 import pytest
 
-from captcha.domain import CaptchaError, SolveMode, SolverResult, Task, TaskEnvelope, UnsolvableError
+from captcha.domain import SolveMode, SolverResult, Task, TaskEnvelope, UnsolvableError
 from captcha.domain.enums import CaptchaType
+from captcha.domain.errors import NeedsBrowserError
 from captcha.services.worker_browser.gate import ConcurrencyGate
-from captcha.services.worker_browser.heartbeat import (
-    LaneHeartbeat,
-    cap_key,
-    lane_key,
+from captcha.services.worker_browser.heartbeat import LaneHeartbeat, cap_key, lane_key
+from captcha.services.worker_browser.limits import (
+    DEFAULT_CONCURRENCY,
+    MAX_TIMEOUT_SEC,
+    MIN_TIMEOUT_SEC,
+    clamp_timeout,
 )
-from captcha.services.worker_browser.limits import DEFAULT_CONCURRENCY, MAX_TIMEOUT_SEC, MIN_TIMEOUT_SEC, clamp_timeout
-from captcha.services.worker_browser.provider import PoolProvider, resolve_provider
-from captcha.services.worker_browser.supervisor import ProcessSupervisor, TrackingProvider
+from captcha.services.worker_browser.provider import resolve_provider
+from captcha.services.worker_browser.tracking import (
+    SessionTracker,
+    TrackingProvider,
+    bind_label,
+    reset_label,
+    task_label,
+)
 from captcha.services.worker_browser.worker import Worker
 from captcha.solvers import Solver, SolverContext, SolverInfo, SolverRegistry
 
@@ -70,34 +77,34 @@ def envelope(
 
 
 class FakeSession:
-    def __init__(self, pid: int | None = None) -> None:
-        self.pid = pid
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
         self.closed = False
 
 
 class FakeProvider:
     """Provider stub: counts opens/closes and peak concurrency."""
 
-    def __init__(self, *, session_pid: int | None = None, delay: float = 0.0) -> None:
-        self.session_pid = session_pid
+    def __init__(self, *, delay: float = 0.0) -> None:
         self.delay = delay
         self.opened = 0
         self.closed = 0
         self.peak = 0
-        self._active = 0
+        self.active = 0
+        self.supervisor: Any = None
 
     @contextlib.asynccontextmanager
     async def session(self, spec: Any = None):
         self.opened += 1
-        self._active += 1
-        self.peak = max(self.peak, self._active)
-        session = FakeSession(pid=self.session_pid)
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        session = FakeSession(job_id=f"job-{self.opened}")
         try:
             if self.delay:
                 await asyncio.sleep(self.delay)
             yield session
         finally:
-            self._active -= 1
+            self.active -= 1
             session.closed = True
             self.closed += 1
 
@@ -193,16 +200,15 @@ class FakeHeartbeat:
         self.stopped = True
 
 
-class FakeSupervisor:
+class FakeTracker:
     def __init__(self) -> None:
         self.killed_labels: list[str] = []
         self.kill_all_calls = 0
-        self.reaped = 0
 
-    def track(self, label: str, pid: int) -> None:  # pragma: no cover - unused
+    def track(self, label: str, job_id: str) -> None:  # pragma: no cover - unused
         pass
 
-    def forget_pid(self, label: str, pid: int) -> None:  # pragma: no cover - unused
+    def forget(self, label: str, job_id: str) -> None:  # pragma: no cover - unused
         pass
 
     async def kill_label(self, label: str) -> int:
@@ -213,10 +219,6 @@ class FakeSupervisor:
         self.kill_all_calls += 1
         return 0
 
-    def reap_profiles(self) -> int:
-        self.reaped += 1
-        return 0
-
 
 def build_worker(
     tmp_path: Path,
@@ -224,7 +226,7 @@ def build_worker(
     solver: type[Solver] | None,
     batches: list[list[tuple[str, TaskEnvelope]]],
     provider: Any = None,
-    supervisor: Any = None,
+    tracker: Any = None,
     gate: ConcurrencyGate | None = None,
     timeout_sec: float | None = None,
     concurrency: int = 2,
@@ -247,7 +249,7 @@ def build_worker(
         state=state,
         heartbeat=heartbeat,
         gate=gate,
-        supervisor=supervisor if supervisor is not None else FakeSupervisor(),
+        tracker=tracker if tracker is not None else FakeTracker(),
         timeout_sec=timeout_sec,
         install_signals=False,
     )
@@ -277,7 +279,7 @@ async def test_success_marks_ready_and_closes_session(tmp_path: Path) -> None:
     worker, consumer, state, heartbeat, provider = build_worker(
         tmp_path,
         solver=solver_class(),
-        batches=[[(("1-0"), env)]],
+        batches=[[("1-0", env)]],
     )
     await drive(worker, consumer)
 
@@ -292,7 +294,7 @@ async def test_success_marks_ready_and_closes_session(tmp_path: Path) -> None:
     assert heartbeat.started and heartbeat.stopped
 
 
-async def test_solver_sees_tracking_provider_and_caps(tmp_path: Path) -> None:
+async def test_solver_sees_tracking_provider(tmp_path: Path) -> None:
     seen: list[Any] = []
 
     class _Probe(solver_class()):  # type: ignore[misc, valid-type]
@@ -301,9 +303,7 @@ async def test_solver_sees_tracking_provider_and_caps(tmp_path: Path) -> None:
             return SolverResult(token="t")
 
     env = envelope()
-    worker, consumer, state, _hb, _provider = build_worker(
-        tmp_path, solver=_Probe, batches=[[("1-0", env)]]
-    )
+    worker, consumer, state, _hb, _provider = build_worker(tmp_path, solver=_Probe, batches=[[("1-0", env)]])
     await drive(worker, consumer)
 
     assert isinstance(seen[0], TrackingProvider)
@@ -326,13 +326,13 @@ async def test_missing_solver_is_terminal_unsolvable(tmp_path: Path) -> None:
 
 
 async def test_hard_timeout_kills_tree_and_releases_slot(tmp_path: Path) -> None:
-    supervisor = FakeSupervisor()
+    tracker = FakeTracker()
     env = envelope()
     worker, consumer, state, _hb, _provider = build_worker(
         tmp_path,
         solver=solver_class(delay=30.0),
         batches=[[("3-0", env)]],
-        supervisor=supervisor,
+        tracker=tracker,
         timeout_sec=0.15,
     )
     started = time.monotonic()
@@ -340,9 +340,8 @@ async def test_hard_timeout_kills_tree_and_releases_slot(tmp_path: Path) -> None
     elapsed = time.monotonic() - started
 
     assert elapsed < 5.0, "hard timeout must not wait for the solver"
-    assert consumer.acked == ["3-0"] or consumer.acked == []
     assert consumer.failed and consumer.failed[0][1] == "ERR_TIMEOUT"
-    assert supervisor.killed_labels, "process tree kill must run on timeout"
+    assert tracker.killed_labels == [task_label(env.task)]
     assert worker._gate is not None and worker._gate.active == 0
     # Retry path: state stays 'processing' until the consumer dead-letters.
     assert state.failed == []
@@ -364,13 +363,10 @@ async def test_timeout_dead_letter_sets_err_timeout(tmp_path: Path) -> None:
 
 
 async def test_needs_browser_in_browser_lane_is_terminal(tmp_path: Path) -> None:
-    class _NeedsBrowser(CaptchaError):
-        code = "ERR_NEEDS_BROWSER"
-
     env = envelope()
     worker, consumer, state, _hb, _provider = build_worker(
         tmp_path,
-        solver=solver_class(error=_NeedsBrowser("ask http again")),
+        solver=solver_class(error=NeedsBrowserError("ask http again")),
         batches=[[("5-0", env)]],
     )
     await drive(worker, consumer)
@@ -398,7 +394,7 @@ async def test_drain_finishes_inflight_before_shutdown(tmp_path: Path) -> None:
     assert {tid for tid, _ in state.ready} == {first.task.id, second.task.id}
     assert consumer.acked == ["6-0", "6-1"]
     assert provider.closed == 2
-    assert provider._active == 0
+    assert provider.active == 0
 
 
 async def test_concurrency_capped_by_sessions(tmp_path: Path) -> None:
@@ -415,6 +411,19 @@ async def test_concurrency_capped_by_sessions(tmp_path: Path) -> None:
 
     assert len(state.ready) == 6
     assert provider.peak <= 2, f"peak sessions {provider.peak} exceeded cap 2"
+
+
+async def test_teardown_kills_leftover_sessions(tmp_path: Path) -> None:
+    tracker = FakeTracker()
+    worker, consumer, _state, _hb, _provider = build_worker(
+        tmp_path,
+        solver=solver_class(),
+        batches=[[("8-0", envelope())]],
+        tracker=tracker,
+    )
+    await drive(worker, consumer)
+
+    assert tracker.kill_all_calls == 1
 
 
 # ---------------------------------------------------------------- gate
@@ -442,11 +451,14 @@ async def test_gate_memory_guard_and_stop() -> None:
 
     assert gate.memory_ok() is False
     assert gate.snapshot()["free_mb"] == 128
-    assert await gate.acquire(stop=stop) is True  # slot taken, then RAM turns us away
-    gate.release(ok=False)
     stop.set()
     assert await gate.wait_for_memory(stop=stop) is False
     assert await gate.acquire(stop=stop) is False
+
+    healthy = ConcurrencyGate(1, ramp_start=1, min_free_mb=2048, free_mb_fn=lambda: 4096)
+    assert healthy.memory_ok() is True
+    assert await healthy.acquire() is True
+    healthy.release(ok=True)
 
 
 # ---------------------------------------------------------------- heartbeat
@@ -454,18 +466,26 @@ async def test_gate_memory_guard_and_stop() -> None:
 
 class FakeRedis:
     def __init__(self) -> None:
-        self.sets: list[tuple[str, Any, int | None]] = []
-        self.sadds: list[tuple[str, tuple[Any, ...]]] = []
+        self.setex_calls: list[tuple[str, int, Any]] = []
+        self.sadd_calls: list[tuple[str, tuple[Any, ...]]] = []
         self.deleted: list[str] = []
+        self.keys: set[str] = set()
 
-    async def set(self, key: str, value: Any, ex: int | None = None) -> None:
-        self.sets.append((key, value, ex))
+    async def setex(self, key: str, ttl: int, value: Any) -> None:
+        self.setex_calls.append((key, ttl, value))
+        self.keys.add(key)
 
     async def sadd(self, key: str, *values: Any) -> None:
-        self.sadds.append((key, values))
+        self.sadd_calls.append((key, values))
 
     async def delete(self, key: str) -> None:
         self.deleted.append(key)
+        self.keys.discard(key)
+
+    async def scan_iter(self, match: str | None = None, count: int | None = None):
+        for key in list(self.keys):
+            if match is None or fnmatch.fnmatch(key, match):
+                yield key
 
 
 async def test_heartbeat_sets_lease_and_capabilities() -> None:
@@ -479,113 +499,66 @@ async def test_heartbeat_sets_lease_and_capabilities() -> None:
     )
 
     assert await beat.beat() is True
-    assert redis.sets == [(lane_key("captcha", "browser", "browser-w1"), "1", 90)]
-    assert redis.sadds == [
-        (cap_key("captcha", "browser"), ("hcaptcha", "recaptcha_v2")),
-    ]
+    assert redis.setex_calls == [(lane_key("captcha", "browser", "browser-w1"), 90, "1")]
+    assert redis.sadd_calls == [(cap_key("captcha", "browser"), ("hcaptcha", "recaptcha_v2"))]
 
     await beat.start()
     await beat.stop()
-    assert beat.lane_key in redis.deleted
+    assert redis.deleted[0] == lane_key("captcha", "browser", "browser-w1")
 
 
-# ---------------------------------------------------------------- supervisor
+# ---------------------------------------------------------------- tracking
 
 
-async def test_supervisor_kills_child_process(tmp_path: Path) -> None:
-    proc = subprocess.Popen(  # noqa: S603 - fixed argv, our own interpreter
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    supervisor = ProcessSupervisor(profile_root=tmp_path)
-    supervisor.track("task-1", proc.pid)
+class FakeKillableSupervisor:
+    def __init__(self) -> None:
+        self.killed: list[str] = []
+
+    def kill(self, job_id: str) -> int:
+        self.killed.append(job_id)
+        return 1
+
+
+async def test_tracking_provider_attributes_sessions_to_tasks() -> None:
+    provider = FakeProvider()
+    provider.supervisor = FakeKillableSupervisor()
+    tracker = SessionTracker(provider)
+    tracked = TrackingProvider(provider, tracker)
+
+    token = bind_label("task-9")
     try:
-        killed = await supervisor.kill_label("task-1")
-        assert killed >= 1
-        proc.wait(timeout=10)
-        assert proc.poll() is not None
+        async with tracked.session(SimpleNamespace(label="x")) as session:
+            assert tracker.jobs("task-9") == (session.job_id,)
+        assert tracker.jobs("task-9") == ()
     finally:
-        if proc.poll() is None:  # pragma: no cover - safety net
-            proc.kill()
-            proc.wait(timeout=10)
+        reset_label(token)
+
+    tracker.track("task-9", "job-9")
+    assert await tracker.kill_label("task-9") == 1
+    assert provider.supervisor.killed == ["job-9"]
 
 
-def test_supervisor_reaps_stale_profiles(tmp_path: Path) -> None:
-    stale = tmp_path / "captcha-browser-old"
-    stale.mkdir()
-    (stale / "cookies.sqlite").write_text("x")
-    old = time.time() - 7200
-    os.utime(stale, (old, old))
+async def test_tracker_kill_all_drops_every_job() -> None:
+    provider = FakeProvider()
+    provider.supervisor = FakeKillableSupervisor()
+    tracker = SessionTracker(provider)
+    tracker.track("a", "job-a")
+    tracker.track("b", "job-b")
 
-    fresh = tmp_path / "captcha-browser-fresh"
-    fresh.mkdir()
-
-    supervisor = ProcessSupervisor(profile_root=tmp_path, profile_ttl_sec=3600)
-    assert supervisor.reap_profiles() == 1
-    assert not stale.exists()
-    assert fresh.exists()
+    assert await tracker.kill_all() == 2
+    assert sorted(provider.supervisor.killed) == ["job-a", "job-b"]
+    assert tracker.labels() == ()
 
 
 # ---------------------------------------------------------------- provider
 
 
-async def test_pool_provider_never_reuses_a_context(tmp_path: Path) -> None:
-    class FakeContext:
-        def __init__(self) -> None:
-            self.cookies: list[dict[str, Any]] = []
+async def test_resolve_provider_builds_camoufox_provider() -> None:
+    from captcha.adapters.browser.provider import CamoufoxProvider
 
-        async def add_cookies(self, cookies: list[dict[str, Any]]) -> None:
-            self.cookies.extend(cookies)
-
-    class FakePool:
-        size = 2
-
-        def __init__(self) -> None:
-            self.configs: list[Any] = []
-            self.contexts: list[FakeContext] = []
-            self.launched = False
-            self.closed = False
-
-        async def launch(self) -> None:
-            self.launched = True
-
-        async def close_all(self) -> None:
-            self.closed = True
-
-        @contextlib.asynccontextmanager
-        async def acquire(self, cfg: Any = None):
-            self.configs.append(cfg)
-            context = FakeContext()
-            self.contexts.append(context)
-            yield SimpleNamespace(context=context)
-
-    pool = FakePool()
-    provider = PoolProvider(pool, headless=True)
-    await provider.start()
-    spec = SimpleNamespace(
-        proxy="http://user:pass@10.0.0.1:8080",
-        cookies=[{"name": "a", "value": "b"}, "not-a-cookie"],
-        user_agent="UA/1.0",
-        locale="de-DE",
-        timezone="Europe/Berlin",
-        headless=True,
-        label="label-1",
-    )
-
-    async with provider.session(spec) as _session:
-        pass
-    async with provider.session(None) as _session:
-        pass
-    await provider.aclose()
-
-    assert pool.launched and pool.closed
-    assert [cfg.max_uses for cfg in pool.configs] == [1, 1]
-    first = pool.configs[0]
-    assert first.proxy == "http://user:pass@10.0.0.1:8080"
-    assert first.locale == "de-DE" and first.timezone == "Europe/Berlin"
-    assert first.user_agent == "UA/1.0"
-    assert pool.contexts[0].cookies == [{"name": "a", "value": "b"}]
+    provider = resolve_provider(SimpleNamespace(worker_browser_sessions=12), headless=False)
+    assert isinstance(provider, CamoufoxProvider)
+    assert provider._headless is False
 
 
 def test_resolve_provider_prefers_explicit_instance() -> None:
@@ -598,3 +571,10 @@ def test_contract_defaults_and_timeout_window() -> None:
     assert clamp_timeout(10) == MIN_TIMEOUT_SEC
     assert clamp_timeout(1000) == MAX_TIMEOUT_SEC
     assert clamp_timeout(240) == 240
+
+
+def test_task_label_is_filesystem_safe() -> None:
+    env = envelope()
+    label = task_label(env.task)
+    assert label == str(env.task.id)
+    assert os.sep not in label

@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import contextlib
 import os
+import signal
 import sys
 
 import structlog
@@ -23,7 +24,7 @@ from captcha.config import get_settings
 from captcha.observability import setup_logging, setup_metrics
 
 from .limits import DEFAULT_CONCURRENCY, LANE
-from .provider import close_provider, resolve_provider, start_provider
+from .provider import close_provider, resolve_provider
 from .worker import Worker
 
 
@@ -94,6 +95,25 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _install_stop_signals(workers: list[Worker]) -> asyncio.Task[None]:
+    """One handler for the process: every consumer must drain on SIGTERM."""
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(sig, lambda _s, _f: stop.set())
+
+    async def _watch() -> None:
+        await stop.wait()
+        for worker in workers:
+            worker.request_stop()
+
+    return asyncio.create_task(_watch(), name="worker-browser-signals")
+
+
 async def _amain(args: argparse.Namespace) -> int:
     settings = get_settings()
     setup_logging(level=settings.log_level, json=settings.log_json)
@@ -117,7 +137,6 @@ async def _amain(args: argparse.Namespace) -> int:
     )
 
     provider = resolve_provider(settings, headless=args.headless)
-    await start_provider(provider)
     log.info(
         "browser.provider.ready",
         provider=type(provider).__name__,
@@ -134,15 +153,22 @@ async def _amain(args: argparse.Namespace) -> int:
             max_retries=args.max_retries,
             headless=args.headless,
             provider=provider,
+            install_signals=False,
         )
         for i in range(consumers)
     ]
 
+    watcher = _install_stop_signals(workers)
     try:
         await asyncio.gather(*(w.run() for w in workers))
     except asyncio.CancelledError:
-        pass
+        for worker in workers:
+            worker.request_stop()
+        raise
     finally:
+        watcher.cancel()
+        with contextlib.suppress(BaseException):
+            await watcher
         with contextlib.suppress(Exception):
             await close_provider(provider)
     return 0

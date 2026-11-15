@@ -20,9 +20,7 @@ MIN_TASK_TIMEOUT: float = 1.0
 CANCEL_GRACE_SEC: float = 5.0
 # Terminal in this lane: retrying cannot change the outcome. ERR_NEEDS_BROWSER
 # is terminal here because the hop budget is one (contract §2).
-TERMINAL_CODES: frozenset[str] = frozenset(
-    {"ERR_UNSOLVABLE", "ERR_CONFIG", "ERR_URL_REJECTED", "ERR_NEEDS_BROWSER"}
-)
+TERMINAL_CODES: frozenset[str] = frozenset({"ERR_UNSOLVABLE", "ERR_CONFIG", "ERR_URL_REJECTED", "ERR_NEEDS_BROWSER"})
 
 
 def clamp_timeout(value: float) -> float:
