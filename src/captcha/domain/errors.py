@@ -46,6 +46,18 @@ class NeedsBrowserError(CaptchaError):
     code = "ERR_NEEDS_BROWSER"
 
 
+class QuotaError(CaptchaError):
+    """Account quota/rate limit would be exceeded (active, daily, spend)."""
+
+    code = "ERR_QUOTA"
+
+
+class UrlRejectedError(CaptchaError):
+    """Client-supplied URL is not a public http(s) target (SSRF guard)."""
+
+    code = "ERR_URL_REJECTED"
+
+
 class SensorError(CaptchaError):
     """Sensor payload rejected by remote. Usually means schema drifted."""
 
