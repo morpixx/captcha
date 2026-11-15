@@ -27,11 +27,7 @@ from .base_grid import GridClassifier
 class HCaptchaSolver(GridClassifier):
     info = SolverInfo(
         name="hcaptcha",
-        types=(
-            CaptchaType.HCAPTCHA,
-            CaptchaType.HCAPTCHA_ENTERPRISE,
-            CaptchaType.CLASSIFICATION_GRID,
-        ),
+        types=(CaptchaType.CLASSIFICATION_GRID,),
         http=True,
 
         needs_js_runtime=False,
