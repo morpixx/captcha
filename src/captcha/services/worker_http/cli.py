@@ -29,6 +29,7 @@ from captcha.adapters.pingback import PingbackSender
 from captcha.adapters.queue import TaskStateStore
 from captcha.adapters.storage.persistence import TaskPersistence, session_factory_for
 from captcha.config import get_settings
+from captcha.domain.redaction import redact_dsn
 from captcha.observability import setup_logging, setup_metrics
 from captcha.solvers import discover_solvers, global_registry
 
@@ -144,10 +145,10 @@ async def _amain(args: argparse.Namespace) -> int:
     try:
         await redis.ping()
     except Exception as exc:
-        log.error("redis.ping_failed", error=str(exc), url=settings.redis_url)
+        log.error("redis.ping_failed", error=str(exc), url=redact_dsn(settings.redis_url))
         await redis.aclose()
         return 2
-    log.info("redis.connected", url=settings.redis_url)
+    log.info("redis.connected", url=redact_dsn(settings.redis_url))
 
     # ---- optional pg -------------------------------------------------------
     # `init_engine` is sync — it builds the SQLAlchemy AsyncEngine but doesn't
