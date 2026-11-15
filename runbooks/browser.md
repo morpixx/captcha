@@ -6,7 +6,8 @@
 
 ## 1. Snapshot
 
-- **lane:** `browser`; типы по каталогу: `hcaptcha`, `hcaptcha_enterprise`.
+- **lane:** `browser`; типы по каталогу: `hcaptcha`, `hcaptcha_enterprise`, `prosopo`,
+  `captchafox`, `yandex`.
 - **worker:** `src/captcha/services/worker_browser/` — `cli.py`, `worker.py`, `runner.py`,
   `gate.py`, `heartbeat.py`, `limits.py`, `tracking.py`.
 - **provider:** `adapters/browser/provider.py` (`CamoufoxProvider`), опции —
