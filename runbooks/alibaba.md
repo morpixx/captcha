@@ -56,7 +56,7 @@
 | `ERR_UNSOLVABLE` | `needs appkey + scene (v1), or pageurl for the browser lane` | пустой payload | требовать пару или URL |
 | `ERR_UNSOLVABLE` | `slider challenge has no front image`, `click challenge has no target text`, `image body is empty`, `broken data URI` | вендор сменил форму челленджа | смотреть `keys` в контексте |
 | `ERR_CHALLENGE_EXPIRED` | `alibaba get rejected the challenge` (400/401/403/404/408/410/429) | челлендж одноразовый/протух | новый раунд |
-| `ERR_CONFIG` | `alibaba solver needs ctx.http` | воркер без HTTP | см. §7 |
+| `ERR_CONFIG` | `alibaba solver needs ctx.http` | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_http` |
 | `ERR_GENERIC` | `alibaba analyze failed` / `not JSON` | 5xx/не-JSONP | `status` в контексте |
 
 ## 6. Canary / фикстуры

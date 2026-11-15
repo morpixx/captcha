@@ -4,7 +4,7 @@
 
 - **captcha type:** `CaptchaType.TENCENT` — Tencent TCaptcha (防水墙): slider или 3-point click, ответ = `ticket` + `randstr`.
 - **antibot family:** Tencent Cloud captcha (TCaptcha); `AntibotEngine` для него нет — это вендорский тип, а не движок.
-- **lane:** `cv` (`domain/catalog.py`), **mode:** `both` (`solve_http` + `solve_browser`).
+- **lane:** `browser` (`domain/catalog.py`), **mode:** `both` (`solve_http` + `solve_browser`).
 - **tier:** 3 — `experimental=True`: протокол собран по публичному SDK, живых сессий нет.
 - **code:** `solvers/interactive/tencent/{solver,wire,endpoints,browser}.py`.
 
@@ -69,7 +69,7 @@
 | `ERR_NEEDS_BROWSER` | задача ушла в браузерный лейн | нет продюсера TDC (`ctx.extra["tencent_tdc"]`) | включить продюсера или решать в браузере |
 | `ERR_CHALLENGE_EXPIRED` | `errorCode` 9/12, или текст про expire/timeout/invalid sess | раунд протух между show и verify | ускорить шаги 3–7, повторить |
 | `ERR_SENSOR` | `errorCode` 7, или текст про collect/tdc/fingerprint | TDC-отпечаток не принят | свежий профиль, другой UA/IP |
-| `ERR_CONFIG` | «requires ctx.http» / «browser lane needs ctx.browser» | лейн без клиента | см. §7 |
+| `ERR_CONFIG` | `tencent browser lane needs ctx.browser` | контекст без browser-провайдера (не штатный воркер) | штатный `worker_browser` его даёт |
 | `ERR_SENSOR` | PoW не сошёлся за бюджет итераций | `pow_difficulty` выше 2M попыток | поднять `MAX_POW_ITERATIONS`, замерить |
 | `ERR_INTERNAL` (`CaptchaError`) | ticket есть, но `errorCode` != 0; или ticket нет | vendor-ответ не по схеме | логи `keys`/`errorCode`, обновить `wire.parse_verify` |
 
@@ -88,11 +88,11 @@
 ## 7. FILL / live-риски
 
 1. **Продюсер TDC не подключён нигде в `services/`** (grep `tencent_tdc` — только сам солвер).
-   Значит HTTP-путь в живом воркере всегда доходит до шага 6 и эскалирует.
-2. **cv-лейн без транспорта.** `services/worker_cv/worker.py` строит `SolverContext` без
-   `http` (строка 140), а тип живёт в лейне `cv`: по коду `solve_http` падает `ERR_CONFIG` до
-   шага 1. Плюс `ERR_NEEDS_BROWSER` в этом воркере не обрабатывается отдельно — задача уходит
-   в общий retry/DLQ, в браузерный лейн не перекладывается. На живом воркере не проверено.
+   Значит HTTP-путь (HTTP-preference) всегда доходит до шага 6 и эскалирует.
+2. **Лейн и эскалация.** Каталог держит тип в `browser`: `worker_browser` даёт `ctx.browser`,
+   а HTTP-путь живёт в `worker_http` (HTTP-preference на browser-типе) и его `ERR_NEEDS_BROWSER`
+   перекладывается в browser-лейн через `_handle_needs_browser` (один прыжок, `MAX_LANE_HOPS`).
+   На живом воркере не проверено.
 3. **Не проверено live:** `errorCode`-таблица (9/12 expired, 7 sensor), форма `ans` для
    клика, набор echo-полей, поведение `pow_difficulty` на реальном aid.
 4. Браузерный лейн читает только готовый ticket: если сайт показывает слайдер, ответа не будет.

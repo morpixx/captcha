@@ -53,7 +53,7 @@
 | `ERR_UNSOLVABLE` | `needs host + session_jwt, or widget_url`, `missing payload fields: ['host']` | пустой payload | требовать JWT+host или widget_url |
 | `ERR_UNSOLVABLE` | `slider challenge has no piece image`, `click challenge has no target prompt`, `image body is empty` | смена формы | `keys`/`variant` в контексте |
 | `ERR_CHALLENGE_EXPIRED` | `verify returned no token` | раунд потреблён | новый раунд |
-| `ERR_CONFIG` | `hunt solver needs ctx.http` | воркер без HTTP | см. §7 |
+| `ERR_CONFIG` | `hunt solver needs ctx.http` | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_http` |
 | `ERR_GENERIC` | `hunt init failed`/`not JSON` | 5xx/не-JSON | `status` в контексте |
 
 ## 6. Canary / фикстуры

@@ -4,7 +4,7 @@
 
 - **captcha type:** `CaptchaType.YIDUN` — NetEase Yidun (易盾): slider или 3-point click, ответ = `validate`.
 - **antibot family:** NetEase Yidun; отдельного `AntibotEngine` нет.
-- **lane:** `cv`, **mode:** `both`.
+- **lane:** `browser` (по каталогу), **mode:** `both` (`solve_http` + `solve_browser`).
 - **tier:** 3 — `experimental=True`, протокол по публичному SDK, live не снят.
 - **code:** `solvers/interactive/yidun/{solver,wire,endpoints,browser}.py`.
 
@@ -58,7 +58,7 @@
 | `ERR_UNSOLVABLE` | нет `captcha_id`; `get` без `token`/bg; силер вернул не объект; пустые точки клика | битый payload или смена схемы | сверить `keys` в контексте ошибки |
 | `ERR_NEEDS_BROWSER` | эскалация в браузер | нет `ctx.extra["yidun_signer"]` | подключить силер или решать в браузере |
 | `ERR_CHALLENGE_EXPIRED` | `code=2306`, или текст expire/timeout/overdue/过期/超时 | раунд протух | ускорить шаги 1–6 |
-| `ERR_CONFIG` | requires ctx.http / browser lane needs ctx.browser | лейн без клиента | см. §7 |
+| `ERR_CONFIG` | `yidun browser lane needs ctx.browser` | контекст без browser-провайдера (не штатный воркер) | штатный `worker_browser` его даёт |
 | `ERR_INTERNAL` (`CaptchaError`) | `validate` при `result:false`; или `validate` нет | vendor-ответ не по схеме | логи `result`/`error`/`msg` |
 
 ## 6. Canary / фикстуры
@@ -76,9 +76,9 @@
 ## 7. FILL / live-риски
 
 1. `yidun_signer` не подключён в `services/` — HTTP-путь всегда упирается в шаг 5.
-2. Лейн `cv`: `services/worker_cv/worker.py` даёт `SolverContext` без `http` (строка 140), а
-   `ERR_NEEDS_BROWSER` там не обрабатывается — эскалации в браузер нет. По коду, live не
-   проверено.
+2. Лейн `browser`: `worker_browser` даёт `ctx.browser`, а `ERR_NEEDS_BROWSER` из HTTP-пути
+   обрабатывает `worker_http` (один прыжок, `MAX_LANE_HOPS`). В cv-лейн тип не маршрутизируется
+   (`domain/catalog.py`). По коду, live не проверено.
 3. Не проверено live: значения `type`/`runEnv`, набор echo-полей, реальные `width` и формат
    `cb` (шифр не снят — это осознанный отказ, а не FILL).
 4. `fp` пустой по умолчанию: похоже на оценку риска вендором, влияние не измерено.

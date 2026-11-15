@@ -4,7 +4,7 @@
 
 - **captcha type:** `CaptchaType.MTCAPTCHA` (`mtcaptcha`) — текстовый image-челлендж MTCaptcha: OCR картинки, токен минтит верификатор.
 - **antibot family:** нет. Плоский JSON-API `mtcv1` + риск-cookie `mtv1Pulse`.
-- **lane:** `cv` (по каталогу, нужен OCR), **mode:** `http`.
+- **lane:** `cv` (по каталогу, нужен OCR; `worker_cv` даёт per-task `ctx.http`), **mode:** `http`.
 - **tier:** 3 — `experimental=True`; wire снят с виджета 2026-10-23, живой прогон не записан.
 - **code:** `solvers/interactive/mtcaptcha/{solver,wire,endpoints,pulse,fold}.py`.
 
@@ -48,7 +48,7 @@
 | код | симптом | причина | что делать |
 |---|---|---|---|
 | `ERR_UNSOLVABLE` | `payload missing sitekey/websiteKey`, `websiteURL must be an absolute URL` | нет ключа/относительный URL | требовать sitekey + абсолютный URL |
-| `ERR_CONFIG` | `requires ctx.http` | cv-воркер без HTTP-клиента | см. §7 |
+| `ERR_CONFIG` | `requires ctx.http` | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_cv` |
 | `ERR_CHALLENGE_EXPIRED` | `getchallenge/getimage rejected the challenge` (400/401/403/404/408/410/429) | челлендж одноразовый/протух | новый раунд |
 | `ERR_GENERIC` (`CaptchaError`) | `mtcaptcha: OCR returned no text` | пустой OCR | ретрай с новым `ct` |
 | `ERR_GENERIC` (`CaptchaError`) | `getchallenge failed` / `not JSON` | 5xx или не-JSON | смотреть `status` в контексте |
@@ -67,7 +67,7 @@
 
 ## 7. FILL / live-риски
 
-1. **Лейн против контекста.** Каталог ставит тип в `cv`, а `services/worker_cv/worker.py` собирает `SolverContext` без `http` — на этом воркере задача падает в `ERR_CONFIG` до первого запроса. Нужен `ctx.http` на cv-воркере или перенос в http-лейн; по коду, на живом стенде не проверено.
+1. **Транспорт.** `services/worker_cv/worker.py` выдаёт per-task `ctx.http` (`_run_one` → `context.task_context`), поэтому шаги 2–5 идут через клиент задачи с её proxy/UA/cookies. `ERR_CONFIG` из §5 возможен только на контексте без клиента; на живом стенде не проверено.
 2. `DEFAULT_UA` — заглушка, помеченная `# FILL` в солвере: реальный UA транспорта не читается (curl_cffi его не отдаёт).
 3. `JS_VERSION`, `X-...`-заголовки и `CONF_SUM` пиннятся на сборку 2026-10-23; новый релиз виджета = `ERR_CHALLENGE_EXPIRED`.
 4. `mtv1Pulse` строится из site_url+UA+языка; насколько он совпадает с настоящим риском-куки, не проверено.

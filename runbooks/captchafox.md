@@ -54,7 +54,7 @@
 | `ERR_NEEDS_BROWSER` | `the verify body needs the widget's __cf_wapi proof` | нет `proof`/`cs` | прислать proof или браузерный лейн |
 | `ERR_UNSOLVABLE` | `payload missing sitekey/websiteKey`, `payload missing websiteURL`, `asset is neither base64 nor a URL` | пустой/битый payload | требовать ключ, URL и ассеты |
 | `ERR_CHALLENGE_EXPIRED` | `empty challenge asset` | CDN отдал пусто | новый раунд |
-| `ERR_CONFIG` | `captchafox solver requires ctx.http` | воркер без HTTP | см. §7 |
+| `ERR_CONFIG` | `SolverContext.browser is None: the browser lane needs a provider` | контекст без browser-провайдера (не штатный воркер) | штатный `worker_browser` его даёт |
 | `ERR_CHALLENGE_EXPIRED` | 401/403/409/410/428/429 в `wire` | челлендж протух | новый раунд |
 
 ## 6. Canary / фикстуры

@@ -50,7 +50,7 @@
 | `ERR_UNSOLVABLE` | `image+steps is a kaleidoscope path, not an OCR image` | режим `steps` | не поддерживается |
 | `ERR_UNSOLVABLE` | `payload missing sid/captcha_sid`, `payload missing redirectUri/websiteURL`, `the page left the redirectUri host` | пустой payload/чужой хост | требовать поля, сменить прокси |
 | `ERR_CHALLENGE_EXPIRED` | `vk issued no success_token` | виджет не отдал токен | новый раунд |
-| `ERR_CONFIG` | `vk image solver requires ctx.http` | воркер без HTTP | см. §7 |
+| `ERR_CONFIG` | `vk image solver requires ctx.http` | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_http` |
 | `ERR_GENERIC` | `vk: OCR returned no text` | пустой OCR | новый раунд |
 
 ## 6. Canary / фикстуры

@@ -43,7 +43,7 @@
 
 | код | симптом | причина | что делать |
 |---|---|---|---|
-| `ERR_CONFIG` | «requires ctx.http» | лейн без транспорта | проверить деплой |
+| `ERR_CONFIG` | «requires ctx.http» | контекст без HTTP-клиента (не штатный воркер) | собрать контекст как в `worker_http` |
 | `ERR_UNSOLVABLE` | нет sitekey/site_url; пустой `action`; `min_score` вне [0,1]; reload без `rresp` | payload или смена схемы ответа | сверить `status`/`body_head` в контексте |
 | `ERR_CHALLENGE_EXPIRED` | anchor без токена | протух release-slug или origin | прислать `v` из живой сессии |
 
