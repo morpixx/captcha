@@ -13,6 +13,10 @@ verified against the live browser build:
         enc_get_req: msgpack([json(c), Ext(18, nonce || ciphertext || tag)])
         plaintext:   form v/sitekey/host/hl/motionData/n/c/pst
 
+A key in passive mode answers checksiteconfig with {"pass": true} and no "c" at
+all; there is nothing to stamp and no bundle to run, so getcaptcha is called
+with an empty n and the plain form (measured: ~150 ms, token back, no JS).
+
 Everything here is pure request/response shaping: no retries, no policy. The
 solver in http.py decides what a challenge or a rejection means.
 """
@@ -65,6 +69,15 @@ class BundleRunner(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class CheckConfig:
+    """checksiteconfig answer: a challenge to stamp, or hCaptcha's passive mode."""
+
+    challenge: dict[str, Any] | None
+    features: dict[str, Any]
+    passive: bool
+
+
+@dataclass(frozen=True, slots=True)
 class Params:
     sitekey: str
     host: str
@@ -100,7 +113,7 @@ def params_from_task(task: Task) -> Params:
     )
 
 
-async def checksite_config(http: Any, params: Params) -> tuple[dict[str, Any], dict[str, Any]]:
+async def checksite_config(http: Any, params: Params) -> CheckConfig:
     query = {
         "v": params.version,
         "host": params.host,
@@ -132,12 +145,18 @@ async def checksite_config(http: Any, params: Params) -> tuple[dict[str, Any], d
         info = resp.json()
     except ValueError as exc:
         raise SensorError("hcaptcha: checksiteconfig returned non-JSON", context={"host": params.host}) from exc
-    if not isinstance(info, dict) or not isinstance(info.get("c"), dict):
-        raise UnsolvableError(
-            "hcaptcha: checksiteconfig returned no challenge",
-            context={"sitekey": params.sitekey, "keys": sorted(info) if isinstance(info, dict) else []},
-        )
-    return info["c"], info.get("features") or {}
+    if not isinstance(info, dict):
+        raise SensorError("hcaptcha: checksiteconfig returned no object", context={"host": params.host})
+    features = info.get("features") if isinstance(info.get("features"), dict) else {}
+    challenge = info.get("c")
+    if isinstance(challenge, dict):
+        return CheckConfig(challenge=challenge, features=features, passive=False)
+    if info.get("pass") is True:
+        return CheckConfig(challenge=None, features=features, passive=True)
+    raise UnsolvableError(
+        "hcaptcha: checksiteconfig returned no challenge",
+        context={"sitekey": params.sitekey, "keys": sorted(info)},
+    )
 
 
 async def get_captcha(
@@ -200,6 +219,33 @@ async def get_captcha(
     return data
 
 
+async def get_captcha_passive(http: Any, params: Params) -> dict[str, Any]:
+    """getcaptcha for a passive key: plain form, empty n-token, no challenge blob."""
+    body = {key: value for key, value in body_payload(params, "").items() if value is not None}
+    body["pst"] = "false"
+    resp = await http.post(
+        f"{GET_CAPTCHA}/{params.sitekey}",
+        data=body,
+        timeout=HTTP_TIMEOUT,
+        headers={"User-Agent": params.user_agent, "Accept": "application/json", "Referer": REFERER},
+    )
+    if resp.status != 200:
+        raise SensorError(
+            f"hcaptcha: passive getcaptcha HTTP {resp.status}",
+            context={"sitekey": params.sitekey, "host": params.host},
+        )
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise SensorError("hcaptcha: passive getcaptcha returned non-JSON", context={"host": params.host}) from exc
+    if not isinstance(data, dict):
+        raise SensorError(
+            "hcaptcha: unexpected passive getcaptcha response",
+            context={"sitekey": params.sitekey, "type": type(data).__name__},
+        )
+    return data
+
+
 def body_payload(params: Params, n_token: str) -> dict[str, Any]:
     now = int(time.time() * 1000)
     motion = {"st": now - 2500, "dct": now - 900, "mm": [], "md": [], "mu": [], "v": 1}
@@ -218,8 +264,13 @@ def body_payload(params: Params, n_token: str) -> dict[str, Any]:
 
 
 def pass_token(data: dict[str, Any]) -> str | None:
+    """A pass UUID, with or without the P1_ prefix.
+
+    Passive keys (hCaptcha's test key included) answer with a bare UUID and
+    "pass": true; a challenge flow answers with P1_<hex>.
+    """
     token = data.get("generated_pass_UUID")
-    if isinstance(token, str) and token.startswith("P1_"):
+    if isinstance(token, str) and token and (token.startswith("P1_") or data.get("pass") is True):
         return token
     fallback = data.get("token")
     if data.get("pass") and isinstance(fallback, str) and fallback:
