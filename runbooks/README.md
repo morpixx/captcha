@@ -112,7 +112,7 @@
 | `botdeflector` | http | pending |
 | `awswaf` | cv | pending |
 
-### Interactive-вендоры (cv/http)
+### Interactive-вендоры (cv/http/browser)
 
 | тип | лейн | runbook |
 |---|---|---|
@@ -121,10 +121,10 @@
 | `tencent` | cv | pending |
 | `yidun` | cv | pending |
 | `alibaba` | cv | pending |
-| `prosopo` | cv | pending |
-| `captchafox` | cv | pending |
-| `vk` | cv | pending |
-| `yandex` | cv | pending |
+| `prosopo` | browser | pending |
+| `captchafox` | browser | pending |
+| `vk` | http | pending |
+| `yandex` | browser | pending |
 | `temu` | http | pending |
 | `binance` | cv | pending |
 | `hunt` | cv | pending |
