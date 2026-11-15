@@ -25,7 +25,7 @@ from captcha.adapters.queue import Producer, TaskStateStore
 from captcha.adapters.queue.capabilities import gateway_live_types
 from captcha.adapters.storage import init_engine, shutdown_engine
 from captcha.config import Settings, get_settings
-from captcha.domain.catalog import lane_for
+from captcha.domain.catalog import lane_for, requires_browser
 from captcha.domain.enums import CaptchaType
 from captcha.observability.logging import setup_logging
 from captcha.services.gateway.errors import validation_error_handler
@@ -76,18 +76,29 @@ async def build_state(settings: Settings) -> AppState:
     )
 
 
+def _browser_only(ct: CaptchaType) -> bool:
+    """True when the type cannot be sold without a live browser worker.
+
+    Two shapes qualify: a type whose catalog lane is `browser`, and an
+    `http`-lane type flagged `needs_browser` (§2 escalation types such as
+    Turnstile: their HTTP solver only bootstraps and always ends in
+    `NeedsBrowserError`). Everything else keeps the registry as the source of
+    truth, so an HTTP-only deployment still sells the types it can solve.
+    """
+    return lane_for(ct) == "browser" or requires_browser(ct)
+
+
 def _available_types(
     registry_types: frozenset[CaptchaType],
     live_types: frozenset[CaptchaType],
 ) -> frozenset[CaptchaType]:
     """Types the gateway may sell right now.
 
-    A browser-lane type is only sellable with a fresh browser-worker heartbeat:
-    a registered solver is not proof that the expensive lane is up. Everything
-    else keeps the registry as the source of truth.
+    A browser-only type is only sellable with a fresh browser-worker heartbeat:
+    a registered solver is not proof that the expensive lane is up.
     """
-    browser_lane = {ct for ct in CaptchaType if lane_for(ct) == "browser"}
-    return frozenset((registry_types - browser_lane) | live_types)
+    browser_only = {ct for ct in CaptchaType if _browser_only(ct)}
+    return frozenset((registry_types - browser_only) | live_types)
 
 
 def _load_solver_types() -> frozenset[CaptchaType]:
