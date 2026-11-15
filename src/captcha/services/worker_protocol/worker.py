@@ -160,7 +160,9 @@ class Worker:
 
     async def _prepare_solvers(self) -> None:
         assert self._registry is not None and self._ctx is not None
-        for cls in self._registry.all_solvers():
+        # Non-experimental first: `_by_type` keeps the first hit, matching
+        # the preference `pick()` applies.
+        for cls in self._registry.resolution_order():
             accepted = self._accepted_types(cls)
             if not accepted:
                 continue
@@ -190,6 +192,11 @@ class Worker:
             )
 
     def _accepted_types(self, cls: type[Solver]) -> list[CaptchaType]:
+        if not cls.info.http:
+            # A browser-only solver has no `solve_http`; caching it here would
+            # turn every task into the base-class "not supported" error. It
+            # belongs to the browser lane.
+            return []
         accepted: list[CaptchaType] = []
         for ct in cls.info.types:
             fake = Task(

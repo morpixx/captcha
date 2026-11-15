@@ -27,7 +27,7 @@ from captcha.adapters.queue import Producer, TaskStateStore
 from captcha.adapters.queue.capabilities import gateway_live_types
 from captcha.adapters.storage import init_engine, shutdown_engine
 from captcha.config import Settings, get_settings
-from captcha.domain.catalog import lane_for
+from captcha.domain.catalog import lane_for, requires_browser
 from captcha.domain.enums import CaptchaType, SolveMode
 from captcha.domain.redaction import redact_dsn
 from captcha.observability.logging import setup_logging
@@ -89,6 +89,18 @@ async def build_state(settings: Settings) -> AppState:
     )
 
 
+def _browser_only(ct: CaptchaType) -> bool:
+    """True when the type cannot be sold without a live browser worker.
+
+    Two shapes qualify: a type whose catalog lane is `browser`, and an
+    `http`-lane type flagged `needs_browser` (§2 escalation types such as
+    Turnstile: their HTTP solver only bootstraps and always ends in
+    `NeedsBrowserError`). Everything else keeps the registry as the source of
+    truth, so an HTTP-only deployment still sells the types it can solve.
+    """
+    return lane_for(ct) == "browser" or requires_browser(ct)
+
+
 def _available_types(
     registry_types: frozenset[CaptchaType],
     live_types: frozenset[CaptchaType],
@@ -96,14 +108,14 @@ def _available_types(
 ) -> frozenset[CaptchaType]:
     """Types the gateway may sell right now (contract §7).
 
-    `registry ∪ CAPTCHA_EXTRA_TYPES ∪ heartbeat caps`. A browser-lane type is
+    `registry ∪ CAPTCHA_EXTRA_TYPES ∪ heartbeat caps`. A browser-only type is
     only sellable with a fresh browser-worker heartbeat: a registered solver (or
     a manual declaration) is not proof that the expensive lane is up. Everything
     else keeps the registry as the source of truth.
     """
-    browser_lane = {ct for ct in CaptchaType if lane_for(ct) == "browser"}
+    browser_only = {ct for ct in CaptchaType if _browser_only(ct)}
     declared = registry_types | extra_types
-    return frozenset((declared - browser_lane) | live_types)
+    return frozenset((declared - browser_only) | live_types)
 
 
 def _load_solvers() -> SolverRegistry:

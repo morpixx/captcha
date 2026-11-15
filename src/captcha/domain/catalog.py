@@ -54,16 +54,46 @@ class SolutionKind(StrEnum):
 
 
 class TypeSpec(msgspec.Struct, frozen=True, kw_only=True):
-    """One row per `CaptchaType`."""
+    """One row per `CaptchaType`.
+
+    `lane` is the default owner of the type. The two transport flags describe
+    what the enrolled solvers can do, so `domain.lanes.pick_lane` can honour an
+    internal `preferred_mode` without importing the solver registry (the domain
+    has to stay stdlib-only):
+
+    * `browser` — at least one solver implements `solve_browser`, so the browser
+      lane can take the type when `preferred_mode` is `BROWSER`.
+    * `needs_browser` — no shipped worker can finish the type in-process; it is
+      only sellable while a browser worker is alive, even though its catalog lane
+      is `http` (`turnstile`, `cf_challenge` carry an HTTP bootstrap that always
+      ends in `NeedsBrowserError`, so the HTTP lane is a ramp, not an answer).
+    """
 
     type: CaptchaType
     lane: Lane
     price: Decimal
     solution_kind: SolutionKind
+    browser: bool = False
+    needs_browser: bool = False
 
 
-def _row(ct: CaptchaType, lane: Lane, price: str, kind: SolutionKind) -> TypeSpec:
-    return TypeSpec(type=ct, lane=lane, price=Decimal(price), solution_kind=kind)
+def _row(
+    ct: CaptchaType,
+    lane: Lane,
+    price: str,
+    kind: SolutionKind,
+    *,
+    browser: bool = False,
+    needs_browser: bool = False,
+) -> TypeSpec:
+    return TypeSpec(
+        type=ct,
+        lane=lane,
+        price=Decimal(price),
+        solution_kind=kind,
+        browser=browser,
+        needs_browser=needs_browser,
+    )
 
 
 # Order is grouped by family for readability only; the dict is lookup-only.
@@ -93,8 +123,8 @@ _ROWS: tuple[TypeSpec, ...] = (
     # cv by definition: the delegated slider/click/rotate solver must be
     # importable in the same process, and that only holds where --extra cv is.
     # --- hCaptcha
-    _row(CaptchaType.HCAPTCHA, "browser", "0.00150", SolutionKind.HCAPTCHA),
-    _row(CaptchaType.HCAPTCHA_ENTERPRISE, "browser", "0.00300", SolutionKind.HCAPTCHA),
+    _row(CaptchaType.HCAPTCHA, "browser", "0.00150", SolutionKind.HCAPTCHA, browser=True),
+    _row(CaptchaType.HCAPTCHA_ENTERPRISE, "browser", "0.00300", SolutionKind.HCAPTCHA, browser=True),
     # reCAPTCHA
     _row(CaptchaType.RECAPTCHA_V2, "cv", "0.00200", SolutionKind.RECAPTCHA),
     _row(CaptchaType.RECAPTCHA_V2_ENTERPRISE, "cv", "0.00300", SolutionKind.RECAPTCHA),
@@ -105,58 +135,79 @@ _ROWS: tuple[TypeSpec, ...] = (
     # GeeTest
     _row(CaptchaType.GEETEST_V3, "cv", "0.00180", SolutionKind.GEETEST_V3),
     _row(CaptchaType.GEETEST_V4, "cv", "0.00200", SolutionKind.GEETEST_V4),
-    # FunCaptcha / Arkose
-    _row(CaptchaType.FUNCAPTCHA, "cv", "0.00180", SolutionKind.TOKEN),
+    # FunCaptcha / Arkose. HTTP protocol solver (api.js -> BDA -> token
+    # endpoint) that delegates the games it models and escalates the rest to
+    # the browser lane. It lived in `cv` with no HTTP client on the context, so
+    # every task died in `ConfigError` before the first request.
+    _row(CaptchaType.FUNCAPTCHA, "http", "0.00180", SolutionKind.TOKEN, browser=True),
     _row(CaptchaType.FUNCAPTCHA_BDA, "http", "0.00200", SolutionKind.TOKEN),
-    _row(CaptchaType.FUNCAPTCHA_ENTERPRISE, "cv", "0.00300", SolutionKind.TOKEN),
-    # Turnstile
-    _row(CaptchaType.TURNSTILE, "http", "0.00150", SolutionKind.TURNSTILE),
-    _row(CaptchaType.TURNSTILE_INVISIBLE, "http", "0.00150", SolutionKind.TURNSTILE),
-    # Cloudflare challenge page
-    _row(CaptchaType.CF_CHALLENGE, "http", "0.00300", SolutionKind.CLOUDFLARE),
+    _row(CaptchaType.FUNCAPTCHA_ENTERPRISE, "http", "0.00300", SolutionKind.TOKEN, browser=True),
+    # Turnstile / CF challenge: HTTP lane owns the bootstrap, the browser lane
+    # mints the artifact. `needs_browser` is what keeps the gateway from
+    # selling them while no browser worker is beating (one hop, never in-process).
+    _row(CaptchaType.TURNSTILE, "http", "0.00150", SolutionKind.TURNSTILE, browser=True, needs_browser=True),
+    _row(
+        CaptchaType.TURNSTILE_INVISIBLE,
+        "http",
+        "0.00150",
+        SolutionKind.TURNSTILE,
+        browser=True,
+        needs_browser=True,
+    ),
+    _row(CaptchaType.CF_CHALLENGE, "http", "0.00300", SolutionKind.CLOUDFLARE, browser=True, needs_browser=True),
     # cookie-emitting antibot engines
     _row(CaptchaType.AKAMAI_SENSOR, "http", "0.00400", SolutionKind.COOKIE_ENGINE),
     _row(CaptchaType.AKAMAI_SBSD, "http", "0.00500", SolutionKind.COOKIE_ENGINE),
-    _row(CaptchaType.DATADOME_SLIDER, "http", "0.00300", SolutionKind.COOKIE_ENGINE),
-    _row(CaptchaType.DATADOME_FULL, "http", "0.00400", SolutionKind.COOKIE_ENGINE),
+    _row(CaptchaType.DATADOME_SLIDER, "http", "0.00300", SolutionKind.COOKIE_ENGINE, browser=True),
+    _row(CaptchaType.DATADOME_FULL, "http", "0.00400", SolutionKind.COOKIE_ENGINE, browser=True),
     _row(CaptchaType.KASADA, "http", "0.00400", SolutionKind.COOKIE_ENGINE),
-    _row(CaptchaType.PERIMETERX, "http", "0.00400", SolutionKind.COOKIE_ENGINE),
-    _row(CaptchaType.IMPERVA, "http", "0.00400", SolutionKind.COOKIE_ENGINE),
-    _row(CaptchaType.TSPD, "http", "0.00300", SolutionKind.COOKIE_ENGINE),
+    _row(CaptchaType.PERIMETERX, "http", "0.00400", SolutionKind.COOKIE_ENGINE, browser=True),
+    _row(CaptchaType.IMPERVA, "http", "0.00400", SolutionKind.COOKIE_ENGINE, browser=True),
+    _row(CaptchaType.TSPD, "http", "0.00300", SolutionKind.COOKIE_ENGINE, browser=True),
     _row(CaptchaType.TEMU, "http", "0.00250", SolutionKind.COOKIE_ENGINE),
     # nested-`data` vendors
-    _row(CaptchaType.CASTLE, "http", "0.00300", SolutionKind.DATA_NEST),
-    _row(CaptchaType.HUNT, "cv", "0.00200", SolutionKind.DATA_NEST),
+    _row(CaptchaType.CASTLE, "http", "0.00300", SolutionKind.DATA_NEST, browser=True),
+    # Hunt / Alibaba: the server API is plain HTTP, but the widget mode
+    # escalates and only worker_http owns that hop — a cv worker would play the
+    # escalation as a retry. The CV answer step runs on the http worker's model
+    # registry (slider/detection load without the cv extras).
+    _row(CaptchaType.HUNT, "http", "0.00200", SolutionKind.DATA_NEST, browser=True),
     _row(CaptchaType.BASILISK, "cv", "0.00200", SolutionKind.DATA_NEST),
-    _row(CaptchaType.ALIBABA, "cv", "0.00300", SolutionKind.DATA_NEST),
-    _row(CaptchaType.TENCENT, "cv", "0.00150", SolutionKind.DATA_NEST),
+    _row(CaptchaType.ALIBABA, "http", "0.00300", SolutionKind.DATA_NEST, browser=True),
+    # Tencent's verify needs `collect`, a TDC device blob only the page can
+    # produce; no worker wires the producer, so the HTTP path always escalates.
+    _row(CaptchaType.TENCENT, "browser", "0.00150", SolutionKind.DATA_NEST, browser=True),
     # AWS WAF — token/cookie hybrid
     _row(CaptchaType.AWSWAF, "cv", "0.00300", SolutionKind.AWSWAF),
     # token-grade engines (long tail)
-    _row(CaptchaType.CYBERSIARA, "http", "0.00180", SolutionKind.TOKEN),
-    _row(CaptchaType.TWITCH_INTEGRITY, "http", "0.00300", SolutionKind.TOKEN),
+    _row(CaptchaType.CYBERSIARA, "http", "0.00180", SolutionKind.TOKEN, browser=True),
+    _row(CaptchaType.TWITCH_INTEGRITY, "http", "0.00300", SolutionKind.TOKEN, browser=True),
     _row(CaptchaType.BOTGUARD, "http", "0.00300", SolutionKind.TOKEN),
     _row(CaptchaType.BOTDEFLECTOR, "http", "0.00300", SolutionKind.TOKEN),
     # Shein — classification solver that returns click points
     _row(CaptchaType.SHEIN, "cv", "0.00300", SolutionKind.COORDS),
     # interactive token vendors
     _row(CaptchaType.MTCAPTCHA, "cv", "0.00150", SolutionKind.TOKEN),
-    _row(CaptchaType.YIDUN, "cv", "0.00180", SolutionKind.TOKEN),
+    # Yidun seals `data`/`cb` with a page-side signer: without it the HTTP path
+    # can only post a rejection it cannot see, so the browser is its home.
+    _row(CaptchaType.YIDUN, "browser", "0.00180", SolutionKind.TOKEN, browser=True),
     # These three mint their token inside their own widget (signed commitment /
     # worker proof / iframe RPC): the browser lane is the only place an answer
     # exists, so the catalog routes them there instead of a cv worker that
     # cannot escalate. MTCaptcha keeps the CV lane (OCR); VK keeps the HTTP lane
     # so its legacy `sid` image branch coexists with a browser escalation.
-    _row(CaptchaType.PROSOPO, "browser", "0.00100", SolutionKind.TOKEN),
-    _row(CaptchaType.CAPTCHAFOX, "browser", "0.00180", SolutionKind.TOKEN),
-    _row(CaptchaType.VK, "http", "0.00150", SolutionKind.TOKEN),
-    _row(CaptchaType.YANDEX, "browser", "0.00150", SolutionKind.TOKEN),
+    _row(CaptchaType.PROSOPO, "browser", "0.00100", SolutionKind.TOKEN, browser=True),
+    _row(CaptchaType.CAPTCHAFOX, "browser", "0.00180", SolutionKind.TOKEN, browser=True),
+    _row(CaptchaType.VK, "http", "0.00150", SolutionKind.TOKEN, browser=True),
+    _row(CaptchaType.YANDEX, "browser", "0.00150", SolutionKind.TOKEN, browser=True),
     _row(CaptchaType.BINANCE, "cv", "0.00300", SolutionKind.TOKEN),
     _row(CaptchaType.CUTCAPTCHA, "cv", "0.00150", SolutionKind.TOKEN),
     _row(CaptchaType.CAPY, "cv", "0.00180", SolutionKind.TOKEN),
     _row(CaptchaType.KEYCAPTCHA, "cv", "0.00150", SolutionKind.TOKEN),
     _row(CaptchaType.LEMIN, "cv", "0.00150", SolutionKind.TOKEN),
-    _row(CaptchaType.ATBCAPTCHA, "cv", "0.00150", SolutionKind.TOKEN),
+    # atbCaptcha seals the pointer answer with the vendor SDK (AES-GCM under a
+    # page-derived key); without that artifact the verify is a false rejection.
+    _row(CaptchaType.ATBCAPTCHA, "browser", "0.00150", SolutionKind.TOKEN, browser=True),
 )
 
 CATALOG: dict[CaptchaType, TypeSpec] = {row.type: row for row in _ROWS}
@@ -219,6 +270,22 @@ def solution_kind(ct: CaptchaType) -> SolutionKind | None:
     return row.solution_kind if row is not None else None
 
 
+def browser_capable(ct: CaptchaType) -> bool:
+    """True when the type can be served by the browser lane.
+
+    A browser-lane type is capable by definition; every other type says so with
+    `TypeSpec.browser` (it has a solver with a `solve_browser` override).
+    """
+    row = CATALOG.get(ct)
+    return bool(row is not None and (row.lane == "browser" or row.browser))
+
+
+def requires_browser(ct: CaptchaType) -> bool:
+    """True when the type cannot finish without a live browser lane."""
+    row = CATALOG.get(ct)
+    return bool(row is not None and row.needs_browser)
+
+
 def types_by_lane(lane: Lane) -> frozenset[CaptchaType]:
     return frozenset(t for t, s in CATALOG.items() if s.lane == lane)
 
@@ -240,8 +307,10 @@ __all__ = [
     "SolutionKind",
     "TypeSpec",
     "all_specs",
+    "browser_capable",
     "lane_for",
     "price",
+    "requires_browser",
     "solution_kind",
     "spec",
     "types_by_lane",
