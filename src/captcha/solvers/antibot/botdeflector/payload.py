@@ -41,6 +41,16 @@ def challenge_result(payload: dict[str, Any]) -> str:
     return _first(payload, "tt_solutions", "challenge_flow_result", "challengeFlowResult", "solution_token")
 
 
+def site_key(payload: dict[str, Any]) -> str:
+    """Classic-mode site key from the widget embed; Queue-it has none."""
+    return _first(payload, "siteKey", "site_key")
+
+
+def account_id(payload: dict[str, Any]) -> str:
+    """Classic-mode account id from the widget embed; Queue-it carries it in the JWT."""
+    return _first(payload, "accountId", "account_id")
+
+
 def domain_for(task: Task, payload: dict[str, Any]) -> str:
     """Domain, defaulting to Queue-it when the page is a softblock."""
     raw = _first(payload, "domain", "challenge_domain", "api_domain")
