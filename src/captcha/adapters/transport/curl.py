@@ -11,16 +11,20 @@ from __future__ import annotations
 
 import time
 from types import TracebackType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import structlog
 
 from captcha.domain.errors import ChallengeExpiredError, ProxyError
 
+from .guard import guarded_request
 from .ja_profiles import pick_impersonate
 from .response import Response
 from .retry import build_retry_policy
+
+if TYPE_CHECKING:
+    from captcha.adapters.netguard import Resolver
 
 try:
     from curl_cffi.requests import AsyncSession  # type: ignore[import-not-found]
@@ -65,6 +69,11 @@ class Client:
         flag is mostly a kill-switch for debugging HTTP/1.1 edge cases.
       verify: TLS verification. Leave True unless you're pinning a MITM proxy.
       retry_attempts: transport retries (not antibot retries — those bubble).
+      allow_private: test-only escape hatch. When True the netguard check is
+        skipped and curl follows redirects itself; never set it in a worker.
+      resolver: DNS resolver for the netguard check. None = the system resolver;
+        tests inject a stub so the suite never touches DNS.
+      max_redirects: redirect hops followed before a ConnectionError.
     """
 
     def __init__(
@@ -77,6 +86,9 @@ class Client:
         verify: bool = True,
         retry_attempts: int = 3,
         default_headers: dict[str, str] | None = None,
+        allow_private: bool = False,
+        resolver: Resolver | None = None,
+        max_redirects: int = 10,
     ) -> None:
         if AsyncSession is None:
             raise RuntimeError(
@@ -90,6 +102,9 @@ class Client:
         self.verify = verify
         self.retry_attempts = retry_attempts
         self.default_headers = dict(default_headers or {})
+        self.allow_private = allow_private
+        self.resolver = resolver
+        self.max_redirects = max_redirects
 
         self._session: AsyncSession | None = None
         self._closed = False
@@ -185,7 +200,21 @@ class Client:
         async for attempt in policy:
             with attempt:
                 try:
-                    raw = await session.request(method, url, **call_kwargs)
+                    if self.allow_private:
+                        raw = await session.request(method, url, **call_kwargs)
+                    else:
+                        # Every hop goes through netguard; curl's own redirect
+                        # following would open the socket before we could look
+                        # at the Location (SSRF through a public redirector).
+                        raw = await guarded_request(
+                            session,
+                            method,
+                            url,
+                            kwargs=call_kwargs,
+                            resolver=self.resolver,
+                            max_redirects=self.max_redirects,
+                            follow=allow_redirects,
+                        )
                 except _CurlProxyError as exc:
                     raise ProxyError(
                         f"proxy tunnel failed: {exc}",

@@ -25,7 +25,6 @@ from captcha.observability.metrics import tasks_created_total
 from captcha.services.gateway.auth import authenticate
 from captcha.services.gateway.deps import get_db, get_state
 from captcha.services.gateway.errors import (
-    ERR_BAD_REQUEST,
     ERR_NO_SLOT,
     ERR_TASK_NOT_FOUND,
     ERR_UNSUPPORTED_TYPE,
@@ -40,9 +39,9 @@ from captcha.services.gateway.schemas import (
     GetTaskResultRequest,
     GetTaskResultResponse,
     status_to_api,
+    validate_task_urls,
 )
 from captcha.services.gateway.state import AppState
-from captcha.services.gateway.url_guard import validate_client_urls
 
 _log = structlog.get_logger(__name__)
 
@@ -77,26 +76,20 @@ async def create_task(
         _log.info("task.unsupported", type=ct.value, known=len(state.solver_types))
         return ORJSONResponse(envelope(ERR_UNSUPPORTED_TYPE), status_code=status.HTTP_200_OK)
 
-    # Everything downstream reads the payload in its wire-normalised shape: the
-    # SSRF guard below, the stored row and the envelope all use this one dict.
+    # Client URLs are fetch targets for the solver (and for the browser lane):
+    # private/loopback/metadata hosts are refused before pricing, so a rejected
+    # target costs nothing and never reaches a stream (contract §8).
     payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
     payload.pop("type", None)
-
-    # SSRF guard before any money moves: pageurl/websiteURL/challenge_url/surl/
-    # api_server and callbackUrl are fetched by a worker later, and a client
-    # must not be able to point that fetch at the host's own network.
     try:
-        validate_client_urls(payload, callback_url=body.callback_url)
+        await validate_task_urls(payload, resolver=getattr(state, "url_resolver", None))
     except UrlRejectedError as exc:
-        _log.info(
-            "task.url_rejected",
-            type=ct.value,
-            field=exc.context.get("field"),
-            host=exc.context.get("host"),
-            address=exc.context.get("address"),
-            account_id=str(account.id),
+        field = str(exc.context.get("field") or "url")
+        _log.info("task.url_rejected", type=ct.value, field=field)
+        return ORJSONResponse(
+            classify(exc.code, f"{field}: URL is not a public http(s) target"),
+            status_code=status.HTTP_200_OK,
         )
-        return ORJSONResponse(envelope(ERR_BAD_REQUEST), status_code=status.HTTP_200_OK)
 
     cost = estimate_cost(ct)
 

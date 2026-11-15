@@ -56,6 +56,11 @@ ERR_INTERNAL: tuple[int, str, str] = (
     "ERROR_INTERNAL",
     "Internal service error",
 )
+ERR_URL_REJECTED: tuple[int, str, str] = (
+    21,
+    "ERROR_BAD_REQUEST",
+    "URL is not a public http(s) target",
+)
 
 
 # Map CaptchaError.code → public envelope.
@@ -69,6 +74,9 @@ _CODE_MAP: dict[str, tuple[int, str, str]] = {
     "ERR_MODEL_INFERENCE": (27, "ERROR_MODEL_INFERENCE", "Model inference failed"),
     "ERR_CONFIG": (999, "ERROR_INTERNAL", "Internal service error"),
     "ERR_BALANCE": ERR_ZERO_BALANCE,
+    # A client URL that is not a public http(s) target is bad input, not an
+    # internal failure: answer ERROR_BAD_REQUEST and never charge for it.
+    "ERR_URL_REJECTED": ERR_URL_REJECTED,
 }
 
 
@@ -109,4 +117,3 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
         status_code=status.HTTP_200_OK,
         media_type="application/json",
     )
-
