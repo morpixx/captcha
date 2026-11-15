@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Final
 
-from captcha.domain.catalog import LANES
+from captcha.domain.catalog import LANES, lane_for, requires_browser
 from captcha.domain.enums import CaptchaType
 from captcha.domain.lanes import Lane
 
@@ -107,7 +107,16 @@ class CapabilityRegistry:
         """Union of capability sets of lanes that currently have a heartbeat."""
         types: set[CaptchaType] = set()
         for lane in await self.live_lanes():
-            types |= await self.types_for_lane(lane)
+            for ct in await self.types_for_lane(lane):
+                # A browser-gated type is live only on a browser heartbeat,
+                # and a type is advertised by the lane that owns it. An old or
+                # buggy HTTP worker adding every solver type must not bypass
+                # the browser gate or the lane split.
+                if requires_browser(ct):
+                    if lane == "browser":
+                        types.add(ct)
+                elif lane_for(ct) == lane:
+                    types.add(ct)
         return frozenset(types)
 
     async def supports(self, ct: CaptchaType) -> bool:

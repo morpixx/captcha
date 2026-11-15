@@ -133,3 +133,19 @@ async def test_clear_drops_capability_set_with_the_last_worker() -> None:
     await caps.clear("browser", "w-2")
     assert capability_key("captcha", "browser") not in redis.sets
     assert await caps.live_types() == frozenset()
+
+
+async def test_http_heartbeat_cannot_advertise_browser_types() -> None:
+    redis = FakeRedis()
+    caps = _caps(redis)
+    await caps.heartbeat(
+        "http",
+        "w-http",
+        [CaptchaType.HCAPTCHA, CaptchaType.TURNSTILE, CaptchaType.RECAPTCHA_V3],
+    )
+
+    live = await gateway_live_types(redis)  # type: ignore[arg-type]
+
+    assert CaptchaType.HCAPTCHA not in live
+    assert CaptchaType.TURNSTILE not in live
+    assert CaptchaType.RECAPTCHA_V3 in live

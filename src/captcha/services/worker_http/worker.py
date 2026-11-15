@@ -37,6 +37,7 @@ from captcha.adapters.queue.keys import Lane
 from captcha.adapters.storage.persistence import TaskPersistence
 from captcha.application.pingback import pingback_payload
 from captcha.config import Settings
+from captcha.domain.catalog import lane_for, requires_browser
 from captcha.domain.enums import CaptchaType, SolveMode, TaskStatus
 from captcha.domain.errors import (
     CaptchaError,
@@ -128,7 +129,13 @@ class Worker:
         worker, not on a solver being merely importable. A browser-only solver
         is excluded: solve_http on it is the base-class "not supported" error.
         """
-        types = {ct for cls in self._registry.all_solvers() if cls.info.http for ct in cls.info.types}
+        types = {
+            ct
+            for cls in self._registry.all_solvers()
+            if cls.info.http
+            for ct in cls.info.types
+            if lane_for(ct) == "http" and not requires_browser(ct)
+        }
         return tuple(sorted(types, key=lambda ct: ct.value))
 
     async def ensure_group(self) -> None:
