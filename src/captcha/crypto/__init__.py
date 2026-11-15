@@ -22,7 +22,7 @@ from .compress import (
     zlib_deflate,
     zlib_inflate,
 )
-from .hmac import hmac_sha1, hmac_sha256, hmac_sha384, hmac_sha512, hmac_verify
+from .hmac import hmac_md5, hmac_sha1, hmac_sha256, hmac_sha384, hmac_sha512, hmac_verify
 from .rsa import (
     load_public_key,
     load_public_key_from_modexp,
@@ -42,6 +42,7 @@ __all__ = [
     "aes_gcm_encrypt",
     "gzip_compress",
     "gzip_decompress",
+    "hmac_md5",
     "hmac_sha1",
     "hmac_sha256",
     "hmac_sha384",
