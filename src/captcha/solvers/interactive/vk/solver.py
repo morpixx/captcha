@@ -1,22 +1,55 @@
-"""VK — classic image text, or `id.vk.com` slider.
+"""VK — legacy image OCR over HTTP, VK ID token flow in the browser lane.
 
-Branches on payload["mode"]:
-  - "image"  : GET captcha.php?sid=<sid>, OCR, return key for api.vk.com retry.
-  - "slider" : full 3-step dance on id.vk.com.
+Two different protocols share the type:
+
+  * `sid` (API error 14, old integrations): `captcha.php?sid=...` returns an
+    image; OCR it and return the `captcha_key` text. HTTP+CV, no browser.
+  * `redirectUri` (`id.vk.com/not_robot_captcha`): the 2026 widget. The page
+    runs a PoW + FingerprintJS, binds `success_token` to the session/IP, and
+    keeps `remixstlid` in its own cookies. Nothing in that token is derivable
+    from HTTP inputs (docs/reverse-2026.md has the same verdict for the family),
+    so `solve_http` escalates and `solve_browser` drives the page.
+  * the `image+steps` variant from `captchaNotRobot.getContent` is a
+    kaleidoscope path, not an OCR image; it is rejected explicitly.
+
+The token hook is installed before navigation and only stores token-shaped
+JSON; success is never assumed from a 200 alone.
 """
 
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
-from captcha.domain.errors import CaptchaError, UnsolvableError
+from captcha.domain.errors import (
+    CaptchaError,
+    ChallengeExpiredError,
+    ConfigError,
+    NeedsBrowserError,
+    UnsolvableError,
+)
 from captcha.solvers.base import SolverContext, SolverInfo
 from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
+from .._browser import (
+    clean_url,
+    click_first,
+    host_of,
+    install_init_script,
+    navigate,
+    open_session,
+    page_of,
+    read_ua,
+    spec_for,
+    timeout_s,
+    wait_js,
+)
 from . import endpoints as ep
+from . import wire
+from .payload import image_url_of, mode_of, sid_of, site_url
 
 
 @register_solver
@@ -25,79 +58,107 @@ class VKSolver(InteractiveBase):
         name="vk",
         types=(CaptchaType.VK,),
         http=True,
-
+        browser=True,
         experimental=True,
+        version="0.2.0",
     )
 
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
+        mode = mode_of(task)
+        if mode == "token":
+            url = clean_url(site_url(task))
+            if getattr(ctx, "browser", None) is not None:
+                return await self.solve_browser(task, ctx)
+            raise NeedsBrowserError(
+                "vk: success_token is minted by the VK ID widget and bound to the browser session",
+                context={"url": url, "mode": mode},
+            )
+        if mode == "steps":
+            raise UnsolvableError(
+                "vk: captchaNotRobot image+steps is a kaleidoscope path, not an OCR image",
+                context={"type": task.type.value},
+            )
         if ctx.http is None:
-            raise UnsolvableError("vk solver requires ctx.http", context={})
-        mode = task.payload.get("mode", "image")
-        start = time.monotonic()
+            raise ConfigError("vk image solver requires ctx.http", context={"type": task.type.value})
+        sid = sid_of(task)
+        started = time.perf_counter()
+        image_url = image_url_of(task)
+        if image_url is not None:
+            reply = await ctx.http.get(image_url)
+        else:
+            reply = await ctx.http.get(ep.CAPTCHA_IMAGE, params={"sid": sid})
+        image = wire.parse_image(reply)
+        cv = await self._solve_cv(
+            CaptchaType.IMAGE_TO_TEXT,
+            task,
+            ctx,
+            {"image": image, "lang": "en", "charset": "latin"},
+        )
+        text = (cv.text or "").strip()
+        if not text:
+            raise CaptchaError("vk: OCR returned no text", context={"captcha_sid": sid})
+        extra: dict[str, Any] = {"userAgent": task.user_agent} if task.user_agent else {}
+        return SolverResult(
+            token=text,
+            text=text,
+            extra=extra,
+            solve_mode=SolveMode.HTTP,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
 
-        if mode == "image":
-            self._require(task.payload, "sid")
-            sid: str = str(task.payload["sid"])
-            img = await ctx.http.get(ep.CAPTCHA_IMAGE, params={"sid": sid})
-            cv = await self._solve_cv(
-                CaptchaType.IMAGE_TO_TEXT,
-                task,
-                ctx,
-                {"image": img.body, "charset": "latin"},
-            )
-            if not cv.text:
-                raise CaptchaError("vk OCR returned empty text", context={"sid": sid})
-            return SolverResult(
-                token=cv.text,
-                text=cv.text,
-                extra={"sid": sid, "mode": "image"},
-                solve_mode=SolveMode.HTTP,
-                latency_ms=(time.monotonic() - start) * 1000.0,
-            )
-
-        if mode == "slider":
-            self._require(task.payload, "ckey")
-            r = await ctx.http.post(ep.ID_SLIDER_INIT, json={"ckey": task.payload["ckey"]})
-            try:
-                data = r.json()
-            except Exception as exc:
-                raise CaptchaError("vk slider init not JSON", context={"status": r.status}) from exc
-            bg_url = data.get("bg_url")
-            piece_url = data.get("piece_url")
-            cid = data.get("cid") or data.get("challenge_id")
-            if not (bg_url and piece_url and cid):
-                raise CaptchaError(
-                    "vk slider init missing fields — see runbooks/vk.md",
-                    context={"keys": sorted(data.keys())},
-                )
-            bg = await ctx.http.get(bg_url)
-            piece = await ctx.http.get(piece_url)
-            cv = await self._solve_cv(CaptchaType.SLIDER, task, ctx, {"bg": bg.body, "piece": piece.body})
-            vr = await ctx.http.post(
-                ep.ID_SLIDER_VERIFY,
-                json={
-                    "cid": cid,
-                    "offset": int(cv.offset or 0),
-                    # FILL: `track` and `tn` (device token from VK's `frequence.js`)
-                    "track": [],
-                    "tn": "",
-                },
-            )
-            try:
-                vdata = vr.json()
-            except Exception as exc:
-                raise CaptchaError("vk slider verify not JSON", context={"status": vr.status}) from exc
-            token = vdata.get("smart_token") or vdata.get("token")
+    async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
+        started = time.perf_counter()
+        url = clean_url(site_url(task))
+        expected_host = host_of(url)
+        budget_ms = int(timeout_s(task, ctx) * 1000)
+        label = f"vk:{task.type.value}:{task.id}"
+        async with open_session(ctx, spec_for(task, ctx, label=label), solver=self.info.name) as session:
+            page = await page_of(session)
+            await install_init_script(session, wire.TOKEN_HOOK_JS)
+            await navigate(session, page, url, budget_ms)
+            token = await wait_js(page, wire.TOKEN_JS, timeout_ms=max(budget_ms // 2, 1))
             if not token:
-                raise CaptchaError(
-                    "vk slider verify missing token — see runbooks/vk.md",
-                    context={"vdata_keys": sorted(vdata.keys())},
+                await click_first(
+                    page,
+                    [
+                        "#not-robot-captcha-checkbox",
+                        '[data-testid="not-robot-captcha-checkbox"]',
+                        ".vk-captcha__checkbox",
+                        "[role=checkbox]",
+                    ],
                 )
-            return SolverResult(
-                token=token,
-                extra={"cid": cid, "mode": "slider"},
-                solve_mode=SolveMode.HTTP,
-                latency_ms=(time.monotonic() - start) * 1000.0,
+                token = await wait_js(page, wire.TOKEN_JS, timeout_ms=max(budget_ms // 2 - 500, 1))
+            ua = await read_ua(page)
+            host = await _host_of_page(page)
+        if host and expected_host and not _same_vk_family(host, expected_host):
+            raise UnsolvableError(
+                "vk: the page left the redirectUri host",
+                context={"expected_host": expected_host, "actual_host": host, "url": url},
             )
+        if not token:
+            raise ChallengeExpiredError(
+                "vk issued no success_token",
+                context={"url": url, "host": host or expected_host},
+            )
+        return SolverResult(
+            token=str(token),
+            extra={"userAgent": ua} if ua else {},
+            solve_mode=SolveMode.BROWSER,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
 
-        raise UnsolvableError(f"unknown vk mode: {mode}", context={"mode": mode})
+
+def _same_vk_family(actual: str, expected: str) -> bool:
+    """VK may land on id.vk.com or id.vk.ru; anything else is a wrong origin."""
+    actual, expected = actual.lower().strip("."), expected.lower().strip(".")
+    if actual == expected:
+        return True
+    return any(actual.endswith("." + family) and expected.endswith("." + family) for family in ("vk.com", "vk.ru"))
+
+
+async def _host_of_page(page: Any) -> str:
+    try:
+        value = await page.evaluate("() => location.hostname || ''")
+    except Exception:
+        return ""
+    return str(value).strip().lower() if isinstance(value, str) else ""

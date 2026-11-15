@@ -1,25 +1,40 @@
 """Tencent TCaptcha / 防水墙 — slider or 3-point click.
 
 Flow:
-  1. GET  /cap_union_prehandle?aid=<aid>&...                 -> prehandle JSON
-     Pulls `sess`, `tdc_path`, `cdnPic1`, `cdnPic2`, puzzle layout, challenge type.
-  2. GET  <cdnPic1> + <cdnPic2>                              -> bg + piece (or marked bg)
-  3. Solve CV locally. Build `collect` (TDC-Device-Context) + mouse track.
-  4. POST /cap_union_new_verify                              -> ticket + randstr
+  1. GET  /cap_union_prehandle?aid=&accver=1&...                -> sess + echo
+  2. GET  /cap_union_new_show?aid=&sess=&...                    -> images, PoW params
+     (skipped when prehandle already carried cdnPic1/cdnPic2)
+  3. GET  <cdnPic1> + <cdnPic2>                                 -> bg + piece
+  4. CV slider / click in-process, plain-Python PoW from the show reply
+  5. POST /cap_union_new_verify {sess, ans, collect, pow_answer} -> ticket + randstr
+
+Step 5 needs `collect`, the TDC device-context blob. It is a browser
+fingerprint (`window.TDC.getData(true)`), not derivable from the challenge, so
+the solver takes a producer from `ctx.extra["tencent_tdc"]` and escalates with
+NeedsBrowserError when the worker has none. Sending an empty `collect` would
+get the answer rejected as if it were wrong — the failure mode this solver
+exists to avoid. The browser lane is `tencent/browser.py`.
 """
 
 from __future__ import annotations
 
+import inspect
 import time
 from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
 from captcha.domain.enums import SolveMode
-from captcha.domain.errors import CaptchaError, UnsolvableError
+from captcha.domain.errors import (
+    ConfigError,
+    NeedsBrowserError,
+    SensorError,
+    UnsolvableError,
+)
 from captcha.solvers.base import SolverContext, SolverInfo
 from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
+from . import browser, wire
 from . import endpoints as ep
 
 
@@ -29,7 +44,7 @@ class TencentSolver(InteractiveBase):
         name="tencent",
         types=(CaptchaType.TENCENT,),
         http=True,
-
+        browser=True,
         needs_js_runtime=True,  # TDC collect() is obfuscated JS
         experimental=True,
     )
@@ -37,17 +52,66 @@ class TencentSolver(InteractiveBase):
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
         self._require(task.payload, "aid")
         if ctx.http is None:
-            raise UnsolvableError("tencent solver requires ctx.http", context={})
+            raise ConfigError(
+                "tencent solver requires ctx.http",
+                context={"type": task.type.value, "lane": "cv"},
+            )
 
-        aid: str = str(task.payload["aid"])
-        site_url: str = task.payload.get("site_url") or task.site_url or ""
-        start = time.monotonic()
+        aid = str(task.payload["aid"])
+        lang = str(task.payload.get("lang") or task.language or "en")
+        site_url = str(task.payload.get("site_url") or task.site_url or "")
+        showtype = str(task.payload.get("showtype") or "popup")
+        started = time.monotonic()
 
-        prehandle_params: dict[str, Any] = {
+        prehandle = wire.parse_reply(
+            (await ctx.http.get(ep.PREHANDLE, params=self._prehandle_params(task, aid, lang, site_url))).text
+        )
+        show: dict[str, Any] | None = None
+        if not (prehandle.get("cdnPic1") or prehandle.get("bg")):
+            show = wire.parse_reply(
+                (await ctx.http.get(ep.SHOW_NEW, params=self._show_params(aid, prehandle, showtype, lang))).text
+            )
+        round_ = wire.parse_round(prehandle, show)
+        if not round_.pic1:
+            raise UnsolvableError(
+                "tencent show returned no challenge image",
+                context={"keys": sorted({**prehandle, **(show or {})}), "sess": bool(round_.sess)},
+            )
+
+        bg = await ctx.http.get(round_.pic1)
+        piece = await ctx.http.get(round_.pic2) if round_.pic2 else None
+        kind = CaptchaType.SLIDER if piece is not None else CaptchaType.CLICK
+        cv_payload: dict[str, Any] = {"bg": bg.body}
+        if piece is not None:
+            cv_payload["piece"] = piece.body
+        cv = await self._solve_cv(kind, task, ctx, cv_payload)
+
+        collect = await _collect(ctx, round_, aid)
+        ans = wire.format_ans(cv, kind, y=int(round_.echo.get("dragY") or task.payload.get("drag_y") or 0))
+        body = wire.verify_body(round_, ans, collect, aid=aid, showtype=showtype)
+        reply = wire.parse_reply((await ctx.http.post(ep.VERIFY_NEW, data=body)).text)
+        ticket, randstr = wire.parse_verify(reply)
+
+        return SolverResult(
+            token=ticket,
+            text=randstr or None,
+            extra={"randstr": randstr, "ticket": ticket, "cv_kind": kind.value},
+            solve_mode=SolveMode.HTTP,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+        )
+
+    async def solve_browser(self, task: Task, ctx: SolverContext) -> SolverResult:
+        return await browser.solve(task, ctx, solver=self)
+
+    # -- request shaping --------------------------------------------------
+
+    def _prehandle_params(self, task: Task, aid: str, lang: str, site_url: str) -> dict[str, Any]:
+        """Query the SDK sends before it knows anything about the round."""
+        return {
             "aid": aid,
             "accver": 1,
-            "showtype": "popup",
-            "ua": task.payload.get("ua_b64") or "",  # base64(user-agent)
+            "showtype": str(task.payload.get("showtype") or "popup"),
+            "ua": task.payload.get("ua_b64") or "",
             "noheader": 1,
             "fb": 1,
             "aged": 0,
@@ -56,102 +120,45 @@ class TencentSolver(InteractiveBase):
             "grayscale": 1,
             "clientype": 2,
             "cap_cd": "",
-            "uid": "",
-            "lang": "en",
+            "uid": str(task.payload.get("uid") or ""),
+            "lang": lang,
             "entry_url": site_url,
-            # FILL: `subsid`, `callback` (JSONP name), `sess`, `sid` per call.
+            "sess": "",
         }
-        r = await ctx.http.get(ep.PREHANDLE, params=prehandle_params)
-        payload = _strip_jsonp(r.text)
-        try:
-            data = _json_loads(payload)
-        except Exception as exc:
-            raise CaptchaError("tencent prehandle not decodable", context={"head": payload[:160]}) from exc
 
-        sess = data.get("sess") or data.get("sid")
-        pic1 = data.get("cdnPic1")
-        pic2 = data.get("cdnPic2")
-        if not sess or not pic1:
-            raise CaptchaError("tencent prehandle missing sess/cdnPic1", context={"keys": sorted(data.keys())})
-
-        # Images: pic1 is bg with slot; pic2 is piece (slider) OR None for click.
-        bg = await ctx.http.get(pic1)
-        piece = await ctx.http.get(pic2) if pic2 else None
-
-        cv_kind = CaptchaType.SLIDER if pic2 else CaptchaType.CLICK
-        cv_payload: dict[str, Any] = {"bg": bg.body}
-        if piece is not None:
-            cv_payload["piece"] = piece.body
-        cv = await self._solve_cv(cv_kind, task, ctx, cv_payload)
-
-        # Verify body — collect is TDC (tdc_v3.js) device fingerprint.
-        # FILL: run `window.TDC.getData(true)` under ctx.js_runtime or port
-        #       the collect() to Python if the current build is stable.
-        collect_b64 = ""
-        verify_body: dict[str, Any] = {
-            "aid": aid,
-            "protocol": "https",
-            "accver": 1,
-            "showtype": "popup",
-            "ticket": "",
-            "sess": sess,
-            "ans": _format_ans(cv, cv_kind),
-            "pow_answer": "",  # FILL: PoW chain from `pow_prefix` + `pow_difficulty`
-            "pow_calc_time": 0,
-            "eks": data.get("eks", ""),
-            "tlg": data.get("tlg", 0),
-            "vsig": data.get("vsig", ""),
-            "websig": data.get("websig", ""),
-            "subsig": data.get("subsig", ""),
-            "collect": collect_b64,
-            # FILL: `cdata`, `rnd`, `fpinfo` — all written by the SDK.
-        }
-        vr = await ctx.http.post(ep.VERIFY_NEW, data=verify_body)
-        vpayload = _strip_jsonp(vr.text)
-        try:
-            vdata = _json_loads(vpayload)
-        except Exception as exc:
-            raise CaptchaError("tencent verify not decodable", context={"head": vpayload[:160]}) from exc
-        if int(vdata.get("errorCode", "1")) != 0:
-            raise CaptchaError(
-                "tencent verify rejected",
-                context={"errorCode": vdata.get("errorCode"), "errorMessage": vdata.get("errorMessage")},
-            )
-        if not vdata.get("ticket"):
-            raise CaptchaError(
-                "tencent verify did not implement ticket return path — see runbooks/tencent.md",
-                context={"vdata_keys": sorted(vdata.keys())},
-            )
-        return SolverResult(
-            token=vdata["ticket"],
-            text=vdata.get("randstr"),
-            extra={"randstr": vdata.get("randstr"), "ticket": vdata["ticket"]},
-            solve_mode=SolveMode.HTTP,
-            latency_ms=(time.monotonic() - start) * 1000.0,
-        )
+    def _show_params(self, aid: str, prehandle: dict[str, Any], showtype: str, lang: str) -> dict[str, Any]:
+        sess = prehandle.get("sess") or prehandle.get("sid") or ""
+        return {"aid": aid, "sess": sess, "showtype": showtype, "accver": 1, "lang": lang}
 
 
-def _format_ans(cv: SolverResult, kind: CaptchaType) -> str:
-    """Tencent `ans` field encodes target coordinates.
+async def _collect(ctx: SolverContext, round_: wire.Round, aid: str) -> str:
+    """Ask the wired TDC producer for the `collect` blob, or escalate.
 
-    Slider  : `"<x>,<y>"`          (x is slider offset, y constant per challenge)
-    Click 3 : `"x1,y1|x2,y2|x3,y3"` for ordered 3-point text click
+    The producer is an async callable (or an object with `collect()`) that gets
+    the round echo and returns the string `window.TDC.getData(true)` produced in
+    that same profile. Anything else is treated as "no fingerprint" rather than
+    silently sending an empty one.
     """
-    if kind == CaptchaType.SLIDER:
-        return f"{int(cv.offset or 0)},5"
-    pts = cv.coords or []
-    return "|".join(f"{int(x)},{int(y)}" for x, y in pts)
-
-
-def _strip_jsonp(text: str) -> str:
-    """Tencent default-answers JSONP. Strip `cb(` ... `)` when present."""
-    s = text.strip()
-    if "(" in s and s.endswith(")"):
-        return s[s.index("(") + 1 : -1]
-    return s
-
-
-def _json_loads(s: str) -> dict[str, Any]:
-    import json
-
-    return json.loads(s)
+    extra = ctx.extra if isinstance(ctx.extra, dict) else {}
+    producer = extra.get("tencent_tdc")
+    if producer is None:
+        raise NeedsBrowserError(
+            "tencent: TDC collect needs the vendor script inside a browser",
+            context={
+                "artifact": "collect",
+                "aid": aid,
+                "hint": "wire ctx.extra['tencent_tdc'] or use the browser lane",
+            },
+        )
+    call = getattr(producer, "collect", producer)
+    produced = call({"aid": aid, "sess": round_.sess, "pic1": round_.pic1, "pic2": round_.pic2, "echo": round_.echo})
+    if inspect.isawaitable(produced):
+        produced = await produced
+    if isinstance(produced, dict):
+        produced = produced.get("collect")
+    if not isinstance(produced, str) or not produced.strip():
+        raise SensorError(
+            "tencent: the TDC producer returned an empty collect",
+            context={"aid": aid, "type": type(produced).__name__},
+        )
+    return produced

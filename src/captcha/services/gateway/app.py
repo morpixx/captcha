@@ -26,7 +26,7 @@ from captcha.adapters.queue.capabilities import gateway_live_types
 from captcha.adapters.storage import init_engine, shutdown_engine
 from captcha.config import Settings, get_settings
 from captcha.domain.catalog import lane_for
-from captcha.domain.enums import CaptchaType
+from captcha.domain.enums import CaptchaType, SolveMode
 from captcha.observability.logging import setup_logging
 from captcha.services.gateway.errors import validation_error_handler
 from captcha.services.gateway.metrics import build_metrics_app
@@ -34,7 +34,7 @@ from captcha.services.gateway.routes import include_routers
 from captcha.services.gateway.state import AppState
 
 if TYPE_CHECKING:
-    pass
+    from captcha.solvers.registry import SolverRegistry
 
 _log = structlog.get_logger(__name__)
 
@@ -51,19 +51,25 @@ async def build_state(settings: Settings) -> AppState:
     state_store = TaskStateStore(redis, prefix=settings.redis_stream_prefix)
     producer = Producer(redis, prefix=settings.redis_stream_prefix)
     sm = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
-    registry_types = _load_solver_types()
+    solver_registry = _load_solvers()
+    registry_types = frozenset(solver_registry.all_types())
     try:
         live_types = await gateway_live_types(redis, prefix=settings.redis_stream_prefix)
     except Exception as exc:
         # A Redis hiccup must not silently make the gateway sell unsolvable work.
         _log.warning("gateway.capabilities_failed", error=str(exc))
         live_types = frozenset()
-    solver_types = _available_types(registry_types, live_types)
+    solver_types = sellable_types(
+        solver_registry,
+        live_types,
+        allow_experimental=settings.allow_experimental_tasks,
+    )
     _log.info(
         "gateway.solvers",
         count=len(solver_types),
         registry=len(registry_types),
         live=len(live_types),
+        allow_experimental=settings.allow_experimental_tasks,
     )
     return AppState(
         settings=settings,
@@ -90,17 +96,38 @@ def _available_types(
     return frozenset((registry_types - browser_lane) | live_types)
 
 
-def _load_solver_types() -> frozenset[CaptchaType]:
-    """Which captcha types this deployment can actually solve.
+def _load_solvers() -> SolverRegistry:
+    """Load the solver registry once at boot.
 
-    The gateway refuses everything else up front (`ERROR_TASK_NOT_SUPPORTED`)
+    The gateway refuses types it cannot solve up front (`ERROR_TASK_NOT_SUPPORTED`)
     instead of charging the client and letting the task rot until the deadline.
-    Loading the registry costs one import pass at boot and mirrors what every
-    worker does anyway.
+    Loading the registry costs one import pass and mirrors what every worker does.
     """
     from captcha.solvers import discover_solvers
 
-    return frozenset(discover_solvers().all_types())
+    return discover_solvers()
+
+
+def sellable_types(
+    registry: SolverRegistry,
+    live_types: frozenset[CaptchaType],
+    *,
+    allow_experimental: bool,
+) -> frozenset[CaptchaType]:
+    """Types the gateway may sell right now (contract §7).
+
+    `allow_experimental` defaults to True in Settings for the current beta, so
+    the filter only runs when an operator sets ALLOW_EXPERIMENTAL_TASKS=0. A
+    type stays sellable while it has at least one non-experimental solver; a
+    live heartbeat advertising an experimental-only type does not override it.
+    """
+    available = _available_types(frozenset(registry.all_types()), live_types)
+    if allow_experimental:
+        return available
+    experimental_only = {
+        ct for ct in registry.all_types() if registry.pick(ct, mode=SolveMode.AUTO, allow_experimental=False) is None
+    }
+    return available - experimental_only
 
 
 async def shutdown_state(state: AppState) -> None:

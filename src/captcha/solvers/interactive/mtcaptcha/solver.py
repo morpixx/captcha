@@ -1,19 +1,18 @@
-"""MTCaptcha — image slider / object-click behind a double-MD5 token envelope.
+"""MTCaptcha — HTTP text challenge: OCR the image, let the verifier mint the token.
 
-Flow (observed, MTCaptcha v3):
-  1. GET  /mtcv1/api/getchallengev3.json?sk=<sitekey>&...         -> challenge JSON
-     Returns: { result: { challenge: { tid, ct, ... }, img: {uri,...}, vd } }
-  2. GET  <img.uri>                                               -> PNG bytes
-  3. Solve the CV problem locally (slider offset or click points).
-  4. POST /mtcv1/api/submitchallenge.json                         -> verifier
-     Body: { sk, tid, ct, act: { ... user actions ... } }
-     Returns: { result: { verifyResult: { code: 2000, verified: true, vt } } }
-  5. Compose the final `v1(...)` token for the website to submit.
+Wire (2026-10-23 widget build, see `wire.py`):
 
-FILL points call out the parts that need live traffic capture to confirm:
-  - exact query-string params for step 1 (siteWebUrl, u, l, cs, ...)
-  - exact `act` shape for step 4 (differs slider vs object-click)
-  - two chain hashes (ch1, ch2) derivation (JS reverses to a known MD5 chain)
+  `getchallenge.json` -> `getimage.json` -> OCR -> `solvechallenge.json`
+
+The last call returns `verifyResult.verifiedToken.vt`, the `v1(h1,h2,sitekey,
+hash)` string the site submits. The solver never composes that token: the two
+chain hashes are the verifier's, and inventing them was the FILL this replaces.
+
+`getchallenge`/`getimage` failures are a spent challenge (retry with a fresh
+one); a rejected answer is the same class because the challenge is single-use.
+Missing sitekey/URL is structural (`UnsolvableError`), a missing HTTP client is
+misconfiguration (`ConfigError`). No live traffic is needed to exercise any of
+this: the tests replay canned vendor replies and stub the OCR delegate.
 """
 
 from __future__ import annotations
@@ -22,12 +21,20 @@ import time
 from typing import Any
 
 from captcha.domain import CaptchaType, SolverResult, Task
-from captcha.domain.errors import CaptchaError, UnsolvableError
+from captcha.domain.enums import SolveMode
+from captcha.domain.errors import CaptchaError, ConfigError, UnsolvableError
 from captcha.solvers.base import SolverContext, SolverInfo
 from captcha.solvers.registry import register_solver
 
 from .._base import InteractiveBase
 from . import endpoints as ep
+from . import pulse as pulse_mod
+from . import wire
+
+#: Used only when the task carries no UA: the pulse cookie hashes it, and the
+#: HTTP transport sends its own UA anyway. `# FILL`: read the transport's UA
+#: once curl_cffi exposes it instead of guessing here.
+DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) Gecko/20100101 Firefox/147.0"
 
 
 @register_solver
@@ -36,114 +43,122 @@ class MTCaptchaSolver(InteractiveBase):
         name="mtcaptcha",
         types=(CaptchaType.MTCAPTCHA,),
         http=True,
-
-        needs_js_runtime=False,
         experimental=True,
+        version="0.2.0",
     )
 
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
-        self._require(task.payload, "sitekey")
+        payload = task.payload or {}
+        sitekey = _sitekey(task)
+        site_url = _site_url(task)
+        domain = wire.domain_of(site_url)
+        language = _language(task)
         if ctx.http is None:
-            raise UnsolvableError("mtcaptcha solver requires ctx.http", context={})
+            raise ConfigError("mtcaptcha solver requires ctx.http", context={"type": task.type.value})
+        started = time.perf_counter()
 
-        sitekey: str = task.payload["sitekey"]
-        site_url: str = task.payload.get("site_url") or task.site_url or ""
-        start = time.monotonic()
+        session = wire.session_id()
+        headers = wire.headers_for(sitekey, domain, language=language)
+        challenge_reply = await ctx.http.get(
+            ep.GET_CHALLENGE,
+            params=wire.challenge_params(
+                sitekey,
+                domain,
+                session=session,
+                language=language,
+                action=str(payload.get("action") or ""),
+            ),
+            headers=headers,
+        )
+        challenge = wire.parse_challenge(
+            wire.json_object(challenge_reply, "getchallenge"),
+            session=session,
+            language=language,
+            text_length=wire.TEXT_LENGTH,
+        )
 
-        # 1) fetch challenge
-        params: dict[str, Any] = {
-            "sk": sitekey,
-            "tsms": int(time.time() * 1000),
-            "u": site_url,
-            # FILL: `l` (language), `cs` (client signature), `js` (client version)
-            #       — read values straight off a live network capture of the widget.
-        }
-        r = await ctx.http.get(ep.GET_CHALLENGE, params=params)
-        try:
-            data = r.json()
-        except Exception as exc:
-            raise CaptchaError("mtcaptcha getchallenge returned non-JSON", context={"status": r.status}) from exc
+        pulse_value = pulse_mod.pulse(site_url, user_agent=_ua(task, payload), language=language)
+        image_reply = await ctx.http.get(
+            ep.GET_IMAGE,
+            params=wire.image_params(sitekey, ct=challenge.ct, session=session, fold=challenge.fold),
+            headers={**headers, "Cookie": wire.cookie_header(pulse_value)},
+        )
+        image = wire.parse_image(wire.json_object(image_reply, "getimage"))
 
-        result = data.get("result") or {}
-        challenge = result.get("challenge") or {}
-        img = result.get("img") or {}
-        if not challenge or not img.get("uri"):
-            raise CaptchaError("mtcaptcha init missing challenge/img", context={"result_keys": list(result.keys())})
+        cv = await self._solve_cv(
+            CaptchaType.IMAGE_TO_TEXT,
+            task,
+            ctx,
+            {"image": image, "lang": language, "charset": payload.get("charset")},
+        )
+        answer = (cv.text or "").strip()
+        if not answer:
+            # The challenge is still fresh; retry with the next one rather than
+            # billing a task we could not answer.
+            raise CaptchaError("mtcaptcha: OCR returned no text", context={"sitekey": sitekey})
 
-        tid: str = challenge.get("tid", "")
-        ct: str = challenge.get("ct", "")
-        img_uri: str = img["uri"]
-
-        # 2) fetch image(s). MTCaptcha ships single or dual images (slider has
-        # bg + piece, click has one annotated bg).
-        bg = await ctx.http.get(img_uri)
-        piece_uri = img.get("piece_uri")
-        piece = await ctx.http.get(piece_uri) if piece_uri else None
-
-        # 3) delegate CV
-        cv_kind = CaptchaType.SLIDER if piece_uri else CaptchaType.CLICK
-        cv_payload: dict[str, Any] = {"bg": bg.body}
-        if piece is not None:
-            cv_payload["piece"] = piece.body
-        cv = await self._solve_cv(cv_kind, task, ctx, cv_payload)
-
-        # 4) assemble action trace + submit
-        act = _build_act(cv, cv_kind)
-        # FILL: `act` is a JSON object mixing geometry + timing events
-        #       recorded by the SDK. The vendor validates jitter and dwell
-        #       time; re-capture one real session and mirror its shape.
-        submit_body = {
-            "sk": sitekey,
-            "tid": tid,
-            "ct": ct,
-            "act": act,
-            "sa": "",  # sensorAnswer slot — vendor-specific, FILL from live
-        }
-        vr = await ctx.http.post(ep.SUBMIT_CHALLENGE, json=submit_body)
-        try:
-            vdata = vr.json()
-        except Exception as exc:
-            raise CaptchaError("mtcaptcha submit returned non-JSON", context={"status": vr.status}) from exc
-
-        verify = (vdata.get("result") or {}).get("verifyResult") or {}
-        if not verify.get("verified"):
-            raise CaptchaError(
-                "mtcaptcha verify rejected",
-                context={"code": verify.get("code"), "msg": verify.get("msg")},
-            )
-        vt: str | None = verify.get("vt")
-        if not vt:
-            raise CaptchaError("mtcaptcha verify had no vt", context={"verify": verify})
-
-        # 5) final token composition. The two chain hashes come out of the JS
-        # `_getToken` call which rolls md5 over sk+tid+random salts.
-        # FILL: port _getToken from mtcaptcha.min.js into pure Python, or call
-        # the sidecar JS runtime (ctx.js_runtime) with the deobbed function.
-        raise CaptchaError(
-            "mtcaptcha final v1(...) token composition not yet implemented — see runbooks/mtcaptcha.md",
-            context={
-                "vt": vt,
-                "tid": tid,
-                "sitekey": sitekey,
-                "cv_kind": cv_kind.value,
-                "cv_result": {"offset": cv.offset, "coords": cv.coords},
-                "latency_ms": (time.monotonic() - start) * 1000.0,
-            },
+        solve_reply = await ctx.http.get(
+            ep.SOLVE_CHALLENGE,
+            params=wire.solve_params(
+                sitekey,
+                domain,
+                ct=challenge.ct,
+                session=session,
+                answer=answer,
+                fold=challenge.fold,
+                language=language,
+            ),
+            headers=headers,
+        )
+        token = wire.parse_token(wire.json_object(solve_reply, "solvechallenge"))
+        return SolverResult(
+            token=token,
+            extra={"userAgent": _ua(task, payload)} if task.user_agent else {},
+            solve_mode=SolveMode.HTTP,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
         )
 
 
-def _build_act(cv: SolverResult, kind: CaptchaType) -> dict[str, Any]:
-    """Shape the user-action trace the submitchallenge endpoint expects.
+def _sitekey(task: Task) -> str:
+    payload = task.payload or {}
+    for value in (task.sitekey, payload.get("sitekey"), payload.get("websiteKey"), payload.get("key")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raise UnsolvableError(
+        "mtcaptcha payload missing sitekey/websiteKey",
+        context={"type": task.type.value},
+    )
 
-    Vendor validates timing + micro-jitter; use `captcha-sensors` + `captcha-behavior`
-    to synthesize a plausible track. FILL on the exact key names (`mv`, `tr`, `up`...).
-    """
-    if kind == CaptchaType.SLIDER:
-        return {
-            "type": "slider",
-            "dx": cv.offset or 0.0,
-            # FILL: `tr` — list of (t,x,y) samples 60Hz; vendor rejects straight lines.
-            "tr": [],
-        }
-    # click
-    return {"type": "click", "pts": [list(p) for p in (cv.coords or [])], "tr": []}
+
+def _site_url(task: Task) -> str:
+    payload = task.payload or {}
+    for value in (
+        task.site_url,
+        payload.get("site_url"),
+        payload.get("websiteURL"),
+        payload.get("websiteUrl"),
+        payload.get("pageurl"),
+        payload.get("url"),
+    ):
+        if isinstance(value, str) and value.strip():
+            url = value.strip()
+            if "://" in url:
+                return url
+            raise UnsolvableError(
+                "mtcaptcha websiteURL must be an absolute URL",
+                context={"url_len": len(url)},
+            )
+    raise UnsolvableError("mtcaptcha payload missing websiteURL", context={"type": task.type.value})
+
+
+def _language(task: Task) -> str:
+    payload = task.payload or {}
+    value = payload.get("lang") or payload.get("language") or task.language or "en"
+    return str(value).split("-", 1)[0].lower() or "en"
+
+
+def _ua(task: Task, payload: dict[str, Any]) -> str:
+    for value in (task.user_agent, payload.get("user_agent"), payload.get("userAgent")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return DEFAULT_UA
