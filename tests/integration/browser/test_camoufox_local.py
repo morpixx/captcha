@@ -28,6 +28,7 @@ import pytest
 
 pytest.importorskip("camoufox.async_api", reason="camoufox is not installed")
 
+import captcha.adapters.netguard as netguard
 from captcha.adapters.browser.provider import CamoufoxProvider, CamoufoxSession
 from captcha.adapters.browser.supervisor import PROFILE_PREFIX
 from captcha.domain.ports import BrowserSpec
@@ -86,7 +87,9 @@ async def _local_launcher(options: dict[str, Any]) -> AsyncIterator[Any]:
         yield context
 
 
-async def test_provider_opens_a_local_page_and_cleans_up(tmp_path: Path, local_site: str) -> None:
+async def test_provider_opens_a_local_page_and_cleans_up(
+    tmp_path: Path, local_site: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen: list[dict[str, Any]] = []
 
     def recording_launcher(options: dict[str, Any]) -> Any:
@@ -113,6 +116,14 @@ async def test_provider_opens_a_local_page_and_cleans_up(tmp_path: Path, local_s
         assert profile.is_dir()
         assert profile.name.startswith(PROFILE_PREFIX)
         assert profile.parent == tmp_path
+
+        # 127.0.0.1 is exactly what the SSRF guard must reject, so prove the
+        # merged contract first, then bypass it for the navigation itself. The
+        # guard has its own tests (tests/adapters/test_netguard.py); this file
+        # is about the provider's launch, navigation and cleanup.
+        with pytest.raises(netguard.UrlRejectedError):
+            await session.goto(local_site, timeout_ms=60_000)
+        monkeypatch.setattr(netguard, "ensure_public_url", lambda url, **_kwargs: url)
 
         page = await session.goto(local_site, timeout_ms=60_000)
         assert await page.title() == "captcha-browser-fixture"
