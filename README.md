@@ -146,7 +146,7 @@ src/captcha/
 ~~~
 make lint       ruff                          clean
 make imports    import-linter                 6 contracts kept, 0 broken
-make test       pytest                        2453 passed, 12 skipped (10 — integration и Camoufox smoke, 2 — torch/jsdom)
+make test       pytest                        2454 passed, 12 skipped (10 — integration и Camoufox smoke, 2 — torch/jsdom)
 make check      всё вышеперечисленное
 ~~~
 
