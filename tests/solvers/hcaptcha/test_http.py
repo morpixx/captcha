@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +23,7 @@ from captcha.solvers.hcaptcha import wire
 from captcha.solvers.hcaptcha.http import HCaptchaHTTPSolver, NeedsBrowserError
 
 FIXTURES = Path(__file__).with_name("fixtures")
+ADAPTER = FIXTURES.parents[3] / "src" / "captcha" / "adapters" / "hcaptcha_js"
 SITEKEY = "10000000-ffff-ffff-ffff-000000000001"
 PAGE_URL = "https://example.com/login"
 TOKEN = "P1_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.c2ln"
@@ -332,6 +337,57 @@ async def test_getcaptcha_http_error_stays_sensor_error():
     assert "502" in exc.value.message
 
 
+# --- passive keys ------------------------------------------------------------
+
+
+async def test_passive_key_gets_token_without_bundle():
+    http = FakeHTTP(
+        FakeResponse(fixture("checksiteconfig_passive.json")), FakeResponse(fixture("getcaptcha_passive.json"))
+    )
+    bundle = FakeBundle()
+
+    result = await solve(http, bundle)
+
+    assert bundle.solve_calls == []
+    assert bundle.encrypt_calls == []
+    assert bundle.decrypt_calls == []
+    assert result.token == fixture("getcaptcha_passive.json")["generated_pass_UUID"]
+    assert not result.token.startswith("P1_")
+
+    call = http.calls[1]
+    assert call["url"] == f"https://api.hcaptcha.com/getcaptcha/{SITEKEY}"
+    form = call["data"]
+    assert form["n"] == ""
+    assert form["pst"] == "false"
+    assert form["sitekey"] == SITEKEY
+    assert form["host"] == "example.com"
+    assert "c" not in form
+    assert call["headers"]["Referer"] == "https://newassets.hcaptcha.com/"
+    assert "Origin" not in call["headers"]
+
+
+async def test_passive_reject_escalates_to_browser():
+    http = FakeHTTP(
+        FakeResponse(fixture("checksiteconfig_passive.json")), FakeResponse(fixture("getcaptcha_error.json"))
+    )
+
+    with pytest.raises(NeedsBrowserError) as exc:
+        await solve(http, FakeBundle())
+
+    assert exc.value.context["passive"] is True
+
+
+async def test_passive_http_error_is_sensor_error():
+    http = FakeHTTP(
+        FakeResponse(fixture("checksiteconfig_passive.json")), FakeResponse(b"", status=503, content_type="text/html")
+    )
+
+    with pytest.raises(SensorError) as exc:
+        await solve(http, FakeBundle())
+
+    assert "passive" in exc.value.message
+
+
 # --- payload / config guards -------------------------------------------------
 
 
@@ -412,10 +468,98 @@ async def test_runner_round_trip_over_stdio(tmp_path):
         await runner.aclose()
 
 
+SILENT_WORKER = r"""
+require("node:readline").createInterface({ input: process.stdin, crlfDelay: Infinity });
+setInterval(() => {}, 1000);
+"""
+
+BUNDLE_SOURCE = r"""
+console.log("bundle-load-noise");
+window.hsw = async function (mode, bytes) {
+  console.log("undefined");
+  if (typeof mode === "number") return new Uint8Array([0xaa, 0xbb, 0xcc]);
+  return "n-token-after-console";
+};
+"""
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _jwt(claims: dict[str, Any]) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+    return ".".join(
+        [
+            _b64url(json.dumps(header).encode("utf-8")),
+            _b64url(json.dumps(claims).encode("utf-8")),
+            "signature",
+        ]
+    )
+
+
+def _jsdom_root() -> str | None:
+    """Directory that contains node_modules/jsdom, if one is reachable."""
+    candidates = [ADAPTER / "node_modules"]
+    for var in ("HCAPTCHA_JS_NODE_PATH", "NODE_PATH"):
+        candidates.extend(Path(part) for part in os.environ.get(var, "").split(os.pathsep) if part)
+    for candidate in candidates:
+        if (candidate / "jsdom" / "package.json").is_file():
+            return str(candidate)
+    return None
+
+
+async def test_bundle_console_output_does_not_corrupt_stdout(tmp_path, monkeypatch):
+    """Steam's hsw logs 'undefined' after solve; that line must not reach stdout.
+
+    Driven end-to-end through the real server.js/bundle.js/realm.js: the bundle
+    is planted in the on-disk cache under the URL its JWT resolves to, so no
+    network is involved. Without the jsdom virtual-console routing the first
+    response would be the stray "undefined" line and the runner would fail on
+    non-JSON, or read it as the answer to the next call.
+    """
+    node = shutil.which("node")
+    jsdom_root = _jsdom_root()
+    if node is None or jsdom_root is None:
+        pytest.skip("needs node plus jsdom (npm ci in adapters/hcaptcha_js) to run the real worker")
+
+    req = _jwt({"l": "/1/regression/hsw.js", "n": "hsw"})
+    url = "https://newassets.hcaptcha.com/1/regression/hsw.js"
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / (hashlib.sha256(url.encode("utf-8")).hexdigest() + ".js")).write_text(BUNDLE_SOURCE, encoding="utf-8")
+    monkeypatch.setenv("HCAPTCHA_JS_CACHE_DIR", str(cache))
+    monkeypatch.setenv("NODE_PATH", jsdom_root)
+
+    runner = JsBundleRunner(node_binary=node, server_path=ADAPTER / "server.js", cwd=tmp_path)
+    try:
+        token = await runner.solve(req=req, host="example.com", href=PAGE_URL, config={})
+        assert token == "n-token-after-console"
+        assert await runner.encrypt(req, b"\x00\x01", {}) == b"\xaa\xbb\xcc"
+    finally:
+        await runner.aclose()
+
+
+async def test_runner_kills_silent_worker_on_deadline(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    stub = tmp_path / "silent_server.js"
+    stub.write_text(SILENT_WORKER, encoding="utf-8")
+    runner = JsBundleRunner(node_binary=node, server_path=stub, timeout=0.3)
+    started = time.monotonic()
+    try:
+        with pytest.raises(JSRuntimeError) as exc:
+            await runner.solve(req="x.y.z", host="example.com", href=PAGE_URL, config={})
+        assert "timed out" in exc.value.message
+        assert time.monotonic() - started < 15.0
+    finally:
+        await runner.aclose()
+
+
 def test_node_worker_manifest():
-    adapter = FIXTURES.parents[3] / "src" / "captcha" / "adapters" / "hcaptcha_js"
-    manifest = json.loads((adapter / "package.json").read_text(encoding="utf-8"))
+    manifest = json.loads((ADAPTER / "package.json").read_text(encoding="utf-8"))
     assert {"jsdom", "canvas"} <= set(manifest["dependencies"])
-    assert (adapter / "server.js").is_file()
-    assert (adapter / "bundle.js").is_file()
-    assert (adapter / "realm.js").is_file()
+    assert (ADAPTER / "server.js").is_file()
+    assert (ADAPTER / "bundle.js").is_file()
+    assert (ADAPTER / "realm.js").is_file()

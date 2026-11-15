@@ -8,6 +8,8 @@ branches, not to prove a pass rate.
 
 - `checksiteconfig_hsw.json` - encrypted mode: `features.enc_get_req` is set.
 - `checksiteconfig_plain.json` - legacy form mode.
+- `checksiteconfig_passive.json` - passive key: `{"pass": true}`, no challenge.
+- `getcaptcha_passive.json` - passive pass: bare UUID, no `P1_` prefix.
 - `getcaptcha_pass.json` - JSON pass answer with `generated_pass_UUID` (P1_).
 - `getcaptcha_challenge.json` - image challenge answer; HTTP cannot finish it, so
   the solver escalates (NeedsBrowserError).

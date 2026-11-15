@@ -12,8 +12,6 @@
 // One request at a time, in arrival order; the Python runner owns the deadline.
 // stderr is reserved for diagnostics (bundle warnings, stack traces).
 
-const fs = require("node:fs");
-const path = require("node:path");
 const readline = require("node:readline");
 const { solveProof, crypt } = require("./bundle");
 
@@ -88,13 +86,6 @@ async function handleLine(line) {
 }
 
 async function main() {
-  for (const dir of [path.join(__dirname, ".cache")]) {
-    try {
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    } catch (_) {
-      // cache is best-effort
-    }
-  }
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of rl) {
     await handleLine(line);
