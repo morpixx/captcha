@@ -1,0 +1,13 @@
+{
+  "name": "turnstile_widget",
+  "task": {
+    "type": "turnstile",
+    "websiteURL": "https://site.test/login",
+    "websiteKey": "0x4AAAAAAABkMYinukE8"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["token", "userAgent"]
+  },
+  "note": "sitekey comes from tests/solvers/antibot/fixtures/turnstile/widget.html; page URL is the replay constant in test_cloudflare_turnstile.py. Token mint is browser-only and no live target was captured; replay case only."
+}

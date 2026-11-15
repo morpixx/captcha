@@ -1,0 +1,13 @@
+{
+  "name": "recaptcha_v2_audio",
+  "task": {
+    "type": "recaptcha_v2",
+    "websiteURL": "https://example.com/login",
+    "websiteKey": "test-sitekey"
+  },
+  "expect": {
+    "status": "ready",
+    "solution_contains": ["gRecaptchaResponse"]
+  },
+  "note": "sitekey and page URL are the recorded replay constants in tests/solvers/recaptcha/test_v2_grid.py; anchor.html and reload_audio.json pin the wire. The v2 solvers do not attach userAgent, so only the token key is asserted."
+}
