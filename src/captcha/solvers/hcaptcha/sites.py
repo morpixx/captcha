@@ -65,14 +65,14 @@ SITES: tuple[Site, ...] = (
     Site(
         name="steam-community",
         host="steamcommunity.com",
-        sitekey=None,  # FILL: capture from the join/login widget (docs/hcaptcha-sites.md)
+        sitekey="e18a349a-46c2-46a0-87a8-74be79345c92",  # live capture 2026-11-15 (docs/hcaptcha-sites.md)
         invisible=False,
         mode=SolveMode.AUTO,
     ),
     Site(
         name="steam-store",
         host="store.steampowered.com",
-        sitekey=None,  # FILL: confirm it is the same widget as steam-community
+        sitekey="e18a349a-46c2-46a0-87a8-74be79345c92",  # same join widget as steam-community
         invisible=False,
         mode=SolveMode.AUTO,
     ),

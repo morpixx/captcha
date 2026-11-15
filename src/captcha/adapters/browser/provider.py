@@ -195,6 +195,9 @@ class CamoufoxSession:
         wait_until: str = "domcontentloaded",
         timeout_ms: int = 60_000,
     ) -> Any:
+        from captcha.adapters.netguard import ensure_public_url
+
+        ensure_public_url(url, field="websiteURL")
         page = await self.page()
         try:
             await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
@@ -205,6 +208,9 @@ class CamoufoxSession:
                     context={"url": url, "timeout_ms": timeout_ms},
                 ) from exc
             raise CaptchaError("page navigation failed", context={"url": url}) from exc
+        final_url = getattr(page, "url", None)
+        if final_url:
+            ensure_public_url(str(final_url), field="final_url")
         return page
 
     async def load_cookies(self, cookies: list[dict[str, Any]]) -> None:

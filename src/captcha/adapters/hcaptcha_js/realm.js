@@ -1,77 +1,54 @@
 "use strict";
 
-// jsdom realm for the hCaptcha hsw/hsj bundle: the DOM/canvas surface the
-// obfuscated bundle probes before it produces the n-token or does its CTR
-// crypto. Adapted from the research runner (D:/riot-research/hsw_runner_jsdom.js
-// + lib/env), keeping only what the bundle itself reads: navigator/screen
-// geometry, 2d canvas (node-canvas, wired by jsdom), a WebGL stub, WebCrypto,
-// and the constructors its feature tests touch.
+// jsdom realm for the hCaptcha hsw/hsj bundle: the DOM/canvas surface it probes
+// before producing the n-token or doing its CTR crypto. Adapted from the
+// research runner (D:/riot-research/hsw_runner_jsdom.js + lib/env), keeping
+// only what the bundle reads: navigator/screen geometry, 2d canvas
+// (node-canvas, wired by jsdom), a WebGL stub, WebCrypto, fetch.
 //
-// Fidelity is deliberately below a real Chrome: no WebGL renderer, no font
-// metrics beyond node-canvas defaults, no Chrome window-property facade. That
-// is enough for the protocol and for the crypto; hardened sitekeys reject the
-// fingerprint and the task belongs to the browser lane anyway.
+// Fidelity is deliberately below Chrome: no real WebGL, no font stack, no
+// window-property facade. Hardened sitekeys reject the fingerprint; that task
+// belongs to the browser lane.
 
-const vm = require("node:vm");
 const nodeCrypto = require("node:crypto");
-const { JSDOM } = require("jsdom");
+const { JSDOM, VirtualConsole } = require("jsdom");
 
-const WEBGL_VENDOR = 37445;
-const WEBGL_RENDERER = 37446;
 const GL_PARAMS = Object.freeze({
-  [WEBGL_VENDOR]: "Google Inc. (Intel)",
-  [WEBGL_RENDERER]: "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
-  7936: "WebKit", // VENDOR
-  7937: "WebKit WebGL", // RENDERER
-  7938: "WebGL 1.0 (OpenGL ES 2.0 Chromium)", // VERSION
-  35724: "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)", // SHADING_LANGUAGE_VERSION
-  3379: 16384, // MAX_TEXTURE_SIZE
-  34076: 16384, // MAX_CUBE_MAP_TEXTURE_SIZE
-  34921: 16, // MAX_VERTEX_ATTRIBS
-  34930: 16, // MAX_TEXTURE_IMAGE_UNITS
-  35660: 16, // MAX_VERTEX_TEXTURE_IMAGE_UNITS
-  35661: 32, // MAX_COMBINED_TEXTURE_IMAGE_UNITS
-  36347: 1024, // MAX_VERTEX_UNIFORM_VECTORS
-  36348: 30, // MAX_VARYING_VECTORS
-  36349: 1024, // MAX_FRAGMENT_UNIFORM_VECTORS
-  3386: [32767, 32767], // MAX_VIEWPORT_DIMS
-  33901: [1, 1024], // ALIASED_POINT_SIZE_RANGE
-  33902: [1, 1024], // ALIASED_LINE_WIDTH_RANGE
+  37445: "Google Inc. (Intel)", // UNMASKED_VENDOR_WEBGL
+  37446: "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)", // UNMASKED_RENDERER_WEBGL
+  7936: "WebKit", 7937: "WebKit WebGL", 7938: "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+  35724: "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)",
+  3379: 16384, 34076: 16384, 34921: 16, 34930: 16, 35660: 16, 35661: 32,
+  36347: 1024, 36348: 30, 36349: 1024,
+  3386: [32767, 32767], 33901: [1, 1024], 33902: [1, 1024],
 });
 
-const GL_METHODS = [
-  "attachShader", "bindAttribLocation", "bindBuffer", "bindFramebuffer", "bindRenderbuffer",
-  "bindTexture", "blendColor", "blendEquation", "blendEquationSeparate", "blendFunc",
-  "blendFuncSeparate", "bufferData", "bufferSubData", "checkFramebufferStatus", "clear",
-  "clearColor", "clearDepth", "clearStencil", "colorMask", "compileShader", "compressedTexImage2D",
-  "compressedTexSubImage2D", "copyTexImage2D", "copyTexSubImage2D", "createBuffer",
-  "createFramebuffer", "createProgram", "createRenderbuffer", "createShader", "createTexture",
-  "cullFace", "deleteBuffer", "deleteFramebuffer", "deleteProgram", "deleteRenderbuffer",
-  "deleteShader", "deleteTexture", "depthFunc", "depthMask", "depthRange", "detachShader",
-  "disable", "disableVertexAttribArray", "drawArrays", "drawElements", "enable",
-  "enableVertexAttribArray", "finish", "flush", "framebufferRenderbuffer", "framebufferTexture2D",
-  "frontFace", "generateMipmap", "getActiveAttrib", "getActiveUniform", "getAttachedShaders",
-  "getAttribLocation", "getBufferParameter", "getFramebufferAttachmentParameter",
-  "getProgramInfoLog", "getRenderbufferParameter", "getShaderInfoLog", "getShaderSource",
-  "getTexParameter", "getUniform", "getVertexAttrib", "getVertexAttribOffset", "hint",
-  "isBuffer", "isEnabled", "isFramebuffer", "isProgram", "isRenderbuffer", "isShader", "isTexture",
-  "lineWidth", "linkProgram", "pixelStorei", "polygonOffset", "readPixels", "renderbufferStorage",
-  "sampleCoverage", "scissor", "shaderSource", "stencilFunc", "stencilFuncSeparate", "stencilMask",
-  "stencilMaskSeparate", "stencilOp", "stencilOpSeparate", "texImage2D", "texParameterf",
-  "texParameteri", "texSubImage2D", "uniform1f", "uniform1fv", "uniform1i", "uniform1iv",
-  "uniform2f", "uniform2fv", "uniform2i", "uniform2iv", "uniform3f", "uniform3fv", "uniform3i",
-  "uniform3iv", "uniform4f", "uniform4fv", "uniform4i", "uniform4iv", "uniformMatrix2fv",
-  "uniformMatrix3fv", "uniformMatrix4fv", "useProgram", "validateProgram", "vertexAttrib1f",
-  "vertexAttrib1fv", "vertexAttrib2f", "vertexAttrib2fv", "vertexAttrib3f", "vertexAttrib3fv",
-  "vertexAttrib4f", "vertexAttrib4fv", "vertexAttribPointer", "viewport",
-];
+// Every WebGL1 entry point the fingerprint probe reaches for.
+const GL_METHODS = (
+  "attachShader bindAttribLocation bindBuffer bindFramebuffer bindRenderbuffer bindTexture blendColor  " +
+  "blendEquation blendEquationSeparate blendFunc blendFuncSeparate bufferData bufferSubData  " +
+  "checkFramebufferStatus clear clearColor clearDepth clearStencil colorMask compileShader  " +
+  "compressedTexImage2D compressedTexSubImage2D copyTexImage2D copyTexSubImage2D createBuffer  " +
+  "createFramebuffer createProgram createRenderbuffer createShader createTexture cullFace deleteBuffer  " +
+  "deleteFramebuffer deleteProgram deleteRenderbuffer deleteShader deleteTexture depthFunc depthMask  " +
+  "depthRange detachShader disable disableVertexAttribArray drawArrays drawElements enable  " +
+  "enableVertexAttribArray finish flush framebufferRenderbuffer framebufferTexture2D frontFace  " +
+  "generateMipmap getActiveAttrib getActiveUniform getAttachedShaders getAttribLocation getBufferParameter  " +
+  "getFramebufferAttachmentParameter getProgramInfoLog getRenderbufferParameter getShaderInfoLog  " +
+  "getShaderSource getTexParameter getUniform getVertexAttrib getVertexAttribOffset hint isBuffer isEnabled  " +
+  "isFramebuffer isProgram isRenderbuffer isShader isTexture lineWidth linkProgram pixelStorei  " +
+  "polygonOffset readPixels renderbufferStorage sampleCoverage scissor shaderSource stencilFunc  " +
+  "stencilFuncSeparate stencilMask stencilMaskSeparate stencilOp stencilOpSeparate texImage2D texParameterf  " +
+  "texParameteri texSubImage2D uniform1f uniform1fv uniform1i uniform1iv uniform2f uniform2fv uniform2i  " +
+  "uniform2iv uniform3f uniform3fv uniform3i uniform3iv uniform4f uniform4fv uniform4i uniform4iv  " +
+  "uniformMatrix2fv uniformMatrix3fv uniformMatrix4fv useProgram validateProgram vertexAttrib1f  " +
+  "vertexAttrib1fv vertexAttrib2f vertexAttrib2fv vertexAttrib3f vertexAttrib3fv vertexAttrib4f  " +
+  "vertexAttrib4fv vertexAttribPointer viewport "
+).trim().split(" ");
 
 function define(object, name, value) {
-  try {
-    Object.defineProperty(object, name, { value, configurable: true, writable: true });
-  } catch (_) {
-    try { object[name] = value; } catch (_) { /* frozen by jsdom */ }
-  }
+  try { Object.defineProperty(object, name, { value, configurable: true, writable: true }); }
+  catch (_) { try { object[name] = value; } catch (_) { /* frozen by jsdom */ } }
 }
 
 function makeWebGLStub(canvas) {
@@ -200,12 +177,47 @@ function installGlobals(win) {
   }
 }
 
+// The bundle is chatty: Steam's hsw logs "undefined" after every solve. jsdom's
+// default virtual console forwards window.console straight to Node's stdout,
+// which is the worker's protocol channel, so the next request reads that line as
+// a response. Console output is swallowed by default; HCAPTCHA_JS_DEBUG routes it
+// to stderr, where it cannot corrupt the protocol.
+function createVirtualConsole() {
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on("jsdomError", (err) => {
+    const detail = err && err.stack ? err.stack : String(err);
+    process.stderr.write("[hcaptcha-js] jsdomError: " + detail + "\n");
+  });
+  if (!process.env.HCAPTCHA_JS_DEBUG) return virtualConsole;
+  for (const event of ["log", "info", "warn", "error", "dir", "debug"]) {
+    virtualConsole.on(event, (...args) => {
+      const text = args
+        .map((arg) => {
+          try {
+            return typeof arg === "string" ? arg : JSON.stringify(arg);
+          } catch (_) {
+            return String(arg);
+          }
+        })
+        .join(" ");
+      process.stderr.write("[hcaptcha-js bundle] " + text + "\n");
+    });
+  }
+  return virtualConsole;
+}
+
 function createRealm(config) {
   const dom = new JSDOM("<!DOCTYPE html><html><head></head><body></body></html>", {
     url: "https://newassets.hcaptcha.com/",
     userAgent: config.userAgent,
     pretendToBeVisual: true,
+    // The bundle's wasm glue needs the window's own realm and event loop, so
+    // jsdom has to set one up ("outside-only"). We then evaluate the bundle in
+    // *that* context (dom.getInternalVMContext below); a second
+    // vm.createContext(win) loses the "window" global binding and the bundle
+    // aborts with a wasm "unreachable" trap.
     runScripts: "outside-only",
+    virtualConsole: createVirtualConsole(),
   });
   const win = dom.window;
   installCanvas(win);
@@ -217,7 +229,7 @@ function createRealm(config) {
   define(win, "top", win);
   define(win, "parent", win);
   define(win, "frames", win);
-  return { dom, win, ctx: vm.createContext(win, { name: "hcaptcha-bundle" }) };
+  return { dom, win, ctx: dom.getInternalVMContext() };
 }
 
 function whenReady(win) {

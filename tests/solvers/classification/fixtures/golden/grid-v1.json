@@ -1,0 +1,137 @@
+{
+  "artifact": "grid-heads",
+  "version": "v1",
+  "tolerance_px": 0,
+  "min_accuracy": 0.95,
+  "min_coverage": 0.8,
+  "cases": [
+    {
+      "id": "hcaptcha-3x3-0001",
+      "type": "classification_grid",
+      "image": "images/hcaptcha-3x3-0001.png",
+      "payload": {
+        "head": "hcaptcha-v1",
+        "prompt": "select all images with a traffic light",
+        "rows": 3,
+        "cols": 3
+      },
+      "expected": {
+        "objects": [
+          2,
+          5
+        ]
+      },
+      "tags": [
+        "hcaptcha-v1",
+        "3x3"
+      ]
+    },
+    {
+      "id": "recaptcha-3x3-0002",
+      "type": "classification_grid",
+      "image": "images/recaptcha-3x3-0002.png",
+      "payload": {
+        "head": "recaptcha-v1",
+        "prompt": "crosswalk",
+        "rows": 3,
+        "cols": 3
+      },
+      "expected": {
+        "objects": [
+          1,
+          6,
+          8
+        ]
+      },
+      "tags": [
+        "recaptcha-v1",
+        "3x3"
+      ]
+    },
+    {
+      "id": "recaptcha-4x4-0003",
+      "type": "classification_grid",
+      "image": "images/recaptcha-4x4-0003.png",
+      "payload": {
+        "head": "recaptcha-v1",
+        "prompt": "bus",
+        "rows": 4,
+        "cols": 4
+      },
+      "expected": {
+        "objects": [
+          0,
+          7,
+          12,
+          15
+        ]
+      },
+      "tags": [
+        "recaptcha-v1",
+        "4x4"
+      ]
+    },
+    {
+      "id": "funcap-2x3-0004",
+      "type": "classification_grid",
+      "image": "images/funcap-2x3-0004.png",
+      "payload": {
+        "head": "funcap-v1",
+        "prompt": "animal",
+        "rows": 2,
+        "cols": 3
+      },
+      "expected": {
+        "objects": [
+          1,
+          5
+        ]
+      },
+      "tags": [
+        "funcap-v1",
+        "2x3"
+      ]
+    },
+    {
+      "id": "awswaf-3x3-0005",
+      "type": "classification_grid",
+      "image": "images/awswaf-3x3-0005.png",
+      "payload": {
+        "head": "awswaf-v1",
+        "prompt": "wrench",
+        "rows": 3,
+        "cols": 3
+      },
+      "expected": {
+        "objects": [
+          4
+        ]
+      },
+      "tags": [
+        "awswaf-v1",
+        "3x3"
+      ]
+    },
+    {
+      "id": "shein-3x3-0006",
+      "type": "classification_grid",
+      "image": "images/shein-3x3-0006.png",
+      "payload": {
+        "head": "shein-v1",
+        "prompt": "sneakers",
+        "rows": 3,
+        "cols": 3
+      },
+      "expected": {
+        "objects": [
+          2,
+          8
+        ]
+      },
+      "tags": [
+        "shein-v1",
+        "3x3"
+      ]
+    }
+  ]
+}

@@ -40,6 +40,8 @@ dependencies = [
     # observability
     "structlog>=24.4",
     "prometheus-client>=0.21",
+    # canary daemon (services/canary) schedules runs on an interval
+    "apscheduler>=3.10",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-api>=1.27",
     "opentelemetry-exporter-otlp>=1.27",
@@ -132,7 +134,7 @@ explicit_package_bases = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 python_files = ["test_*.py", "*_test.py"]
 
 # --- architecture contracts -------------------------------------------------

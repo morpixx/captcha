@@ -7,12 +7,25 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Final
 
 import httpx
 import structlog
 
+from captcha.observability.metrics import record_canary_type
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
 logger = structlog.get_logger(__name__)
+
+#: A health key has to outlive one missed run (canary interval is 6h, contract §10).
+TYPE_HEALTH_TTL_SECONDS: Final[int] = 12 * 3600
+
+
+def type_health_key(prefix: str, type_: str) -> str:
+    """`captcha:typehealth:<type>` = ok | degraded (contract §10)."""
+    return f"{prefix}:typehealth:{type_}"
 
 
 @dataclass(slots=True)
@@ -112,12 +125,24 @@ class CanarySuite:
         poll_interval_sec: float = 5.0,
         task_timeout_sec: float = 180.0,
         http_timeout_sec: float = 15.0,
+        redis: Redis | None = None,
+        prefix: str = "captcha",
+        health_threshold: float = 0.9,
+        type_health_ttl_sec: int = TYPE_HEALTH_TTL_SECONDS,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.gateway_url = gateway_url.rstrip("/")
         self.fixtures_dir = Path(fixtures_dir)
         self.poll_interval_sec = poll_interval_sec
         self.task_timeout_sec = task_timeout_sec
         self.http_timeout_sec = http_timeout_sec
+        #: optional: without it the suite still runs, it just cannot publish type health
+        self.redis = redis
+        self.prefix = prefix
+        self.health_threshold = health_threshold
+        self.type_health_ttl_sec = type_health_ttl_sec
+        #: injected by tests; production goes through the real network
+        self.transport = transport
 
     def load_fixtures(self) -> list[Fixture]:
         if not self.fixtures_dir.exists():
@@ -152,13 +177,46 @@ class CanarySuite:
             return SuiteReport(started_at=started_at, finished_at=time.time(), results=[])
 
         results: list[FixtureResult] = []
-        async with httpx.AsyncClient(base_url=self.gateway_url, timeout=self.http_timeout_sec) as client:
+        async with httpx.AsyncClient(
+            base_url=self.gateway_url,
+            timeout=self.http_timeout_sec,
+            transport=self.transport,
+        ) as client:
             # sequential by default — the gateway owns concurrency; canary should be
             # cheap and predictable, not a load test
             for fx in fixtures:
                 results.append(await self._run_fixture(client, fx))
 
-        return SuiteReport(started_at=started_at, finished_at=time.time(), results=results)
+        report = SuiteReport(started_at=started_at, finished_at=time.time(), results=results)
+        await self._publish_type_health(report)
+        return report
+
+    async def _publish_type_health(self, report: SuiteReport) -> None:
+        """Per-type verdict -> metrics + `captcha:typehealth:<type>` (contract §10).
+
+        Redis is best-effort: a canary run that cannot publish health is still a
+        valid measurement, and a Redis outage must not hide the pass rate.
+        """
+        by_type: dict[str, list[FixtureResult]] = {}
+        for result in report.results:
+            by_type.setdefault(result.type_, []).append(result)
+
+        for type_, results in sorted(by_type.items()):
+            passed = sum(1 for r in results if r.ok)
+            pass_rate = passed / len(results)
+            healthy = pass_rate >= self.health_threshold
+            record_canary_type(type_, pass_rate=pass_rate, healthy=healthy)
+
+            if self.redis is None:
+                continue
+            try:
+                await self.redis.set(
+                    type_health_key(self.prefix, type_),
+                    "ok" if healthy else "degraded",
+                    ex=self.type_health_ttl_sec or None,
+                )
+            except Exception as exc:
+                logger.warning("canary.typehealth.write_failed", type=type_, error=str(exc))
 
     async def _run_fixture(self, client: httpx.AsyncClient, fx: Fixture) -> FixtureResult:
         type_ = str(fx.task.get("type") or "unknown")

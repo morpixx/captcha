@@ -56,6 +56,8 @@ SOLVERS: tuple[str, ...] = (
     # hcaptcha token: browser first, HTTP research path (Riot profile stays browser)
     "captcha.solvers.hcaptcha.browser:HCaptchaBrowserSolver",
     "captcha.solvers.hcaptcha.http:HCaptchaHTTPSolver",
+    # hopscotch (custom type, not one of the 62 vendor types)
+    "captcha.solvers.hopscotch.solver:HopscotchSolver",
     # interactive
     "captcha.solvers.interactive.alibaba.solver:AlibabaSolver",
     "captcha.solvers.interactive.atbcaptcha.solver:AtbCaptchaSolver",
@@ -91,7 +93,6 @@ SOLVERS: tuple[str, ...] = (
     # score_based
     "captcha.solvers.score_based.recaptcha_v3:RecaptchaV3EnterpriseSolver",
     "captcha.solvers.score_based.recaptcha_v3:RecaptchaV3Solver",
-    "captcha.solvers.score_based.turnstile:TurnstileInvisibleSolver",
     # slider
     "captcha.solvers.slider.slider:SliderSolver",
 )

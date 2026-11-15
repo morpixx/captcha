@@ -2,23 +2,41 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from captcha.domain.enums import CaptchaType, TaskStatus
+from captcha.services.gateway.type_map import normalize_task_payload
 
 
 class TaskPayload(BaseModel):
+    """One 2captcha task object.
+
+    The wire spelling is not ours: clients send official 2captcha/capsolver
+    names, flat proxy fields and hCaptcha extras. The before-validator folds
+    all of that into the same internal shape (see
+    `captcha.services.gateway.type_map`) before the enum and the field types
+    run, so a bad type or a bad proxy is still a clean ERROR_BAD_REQUEST.
+    """
+
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     type: CaptchaType
     sitekey: str | None = Field(default=None, alias="websiteKey")
     site_url: str | None = Field(default=None, alias="websiteURL")
     user_agent: str | None = Field(default=None, alias="userAgent")
-    proxy: str | None = Field(default=None, alias="proxyAddress")
+    proxy: str | None = None
     language: str | None = Field(default=None, alias="languagePool")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_wire_fields(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            return normalize_task_payload(data)
+        return data
 
 
 class CreateTaskRequest(BaseModel):

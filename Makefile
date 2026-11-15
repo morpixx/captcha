@@ -15,6 +15,7 @@ MYPY_SCOPE ?= src/captcha/domain src/captcha/application src/captcha/engines src
 
 .PHONY: help sync lint fmt fix typecheck typecheck-core test test-cov imports check check-full \
 	lint-yaml lint-js test-integration test-integration-up test-integration-down load load-locust \
+	load-stack load-run \
 	migrate seed accounts models expected-models publish-model check-model dev full down build logs clean
 
 help:
@@ -35,6 +36,8 @@ help:
 	@echo "  test-integration-up    start ephemeral redis + postgres for tests/integration"
 	@echo "  test-integration       pytest -m integration (needs the services above; CI service containers work too)"
 	@echo "  test-integration-down  remove the integration containers and volumes"
+	@echo "  load-stack       python -m tools.load.devstack: real gateway + fake-solver workers"
+	@echo "  load-run         python -m tools.load.run driver, KEY=<clientKey> RATE=1000 DURATION=60"
 	@echo "  load             k6 createTask scenario, KEY=<clientKey> RATE=1000 DURATION=60s URL=..."
 	@echo "  load-locust      locust variant of the same scenario"
 	@echo "  migrate          apply migrations to POSTGRES_URL (local, no docker)"
@@ -101,6 +104,18 @@ test-integration:
 
 test-integration-down:
 	$(COMPOSE) $(COMPOSE_INTEGRATION) down -v
+
+load-stack:
+	PYTHONPATH=src $(UV) run python -m tools.load.devstack \
+		$(if $(TYPE),--type $(TYPE),) $(if $(WORKERS),--workers $(WORKERS),) \
+		$(if $(REDIS),--redis-url $(REDIS),) $(if $(PG),--postgres-url $(PG),) $(if $(FLUSH),--flush,)
+
+load-run:
+	@test -n "$(KEY)" || (echo "KEY is required, e.g. make load-run KEY=<clientKey>"; exit 2)
+	PYTHONPATH=src $(UV) run python -m tools.load.run \
+		--url $(or $(URL),http://127.0.0.1:8080) --key $(KEY) \
+		--type $(or $(TYPE),text_captcha) --rate $(or $(RATE),1000) --duration $(or $(DURATION),60) \
+		$(if $(REDIS),--redis-url $(REDIS),) $(if $(JSON),--json $(JSON),) $(if $(STRICT),--strict,)
 
 load:
 	@test -n "$(KEY)" || (echo "KEY is required, e.g. make load KEY=<clientKey>"; exit 2)

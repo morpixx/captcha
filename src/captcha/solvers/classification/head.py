@@ -1,26 +1,34 @@
-"""LoRA classification head.
+"""Prompt-conditioned grid head: ViT features in, tile indices out.
 
-Each registered head name (`hcaptcha-v1`, `recaptcha-v1`, ...) resolves to a
-blob in captcha-models containing:
+Each registered head name (hcaptcha-v1, recaptcha-v1, funcap-v1, awswaf-v1,
+shein-v1) resolves to a model in captcha-models. Two layouts are supported
+because ml-platform publishes both:
 
-    weights.safetensors    LoRA deltas + classifier.weight / classifier.bias
-    meta.json              { labels: [...], base_backbone: "...", r: 8, alpha: 16 }
+    single   weights.safetensors + meta.json (labels in input_schema or labels)
+    bundle   model.safetensors + config.json + release.json + meta.json
 
-At inference we skip reconstructing a full PEFT model — the head's classifier
-projects pooled ViT features directly, and LoRA deltas (if any) are merged into
-a tiny adapter module once at load time. Keeps the hot path two matmuls.
+At inference we do not rebuild a PEFT model: the head's classifier projects
+pooled ViT features directly. Only classifier.weight / classifier.bias are
+read, which is the contract docs/ml.md gives the training side. LoRA deltas are
+rejected loudly rather than silently ignored: merging them is not implemented.
+
+Failure shape, no fallback predictor:
+    ConfigError          no registry/meta/labels, unknown head, LoRA payload
+    ModelInferenceError  unreadable/corrupt weights, shape mismatch, bad prompt
 """
 
 from __future__ import annotations
 
-import json
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from captcha.domain.errors import ConfigError, ModelInferenceError
+from captcha.domain.errors import CaptchaError, ConfigError, ModelInferenceError
 
 from .backbone import ViTBackbone
+from .grid import GridHeadContract, GridHeadSpec, GridShape, head_contract
+from .head_meta import head_spec_from_meta
 
 if TYPE_CHECKING:
     import torch
@@ -31,11 +39,11 @@ _HEAD_LOCK = threading.Lock()
 
 
 class LoRAHead:
-    """Linear classifier on top of a (optionally LoRA-adapted) ViT backbone.
+    """Linear classifier on top of a frozen ViT backbone.
 
-    `labels` is the ordered class list; for a grid-selection head the labels
-    are the object vocabulary (`bus`, `crosswalk`, ...). The solver maps
-    `prompt` → label index before calling `predict`.
+    The name is historical: the shipped heads are frozen-backbone logistic
+    rows, not LoRA adapters. The public surface is the grid contract: labels,
+    prompt matching, threshold, grid shape.
     """
 
     def __init__(
@@ -43,20 +51,33 @@ class LoRAHead:
         *,
         name: str,
         version: str,
-        backbone: ViTBackbone,
+        spec: GridHeadSpec,
         classifier: Any,
-        labels: list[str],
-        threshold: float = 0.5,
-        lora_merged: bool = False,
     ) -> None:
         self.name = name
         self.version = version
-        self.backbone = backbone
+        self.spec = spec
         self._classifier = classifier
-        self.labels = labels
-        self.label_to_idx: dict[str, int] = {lab: i for i, lab in enumerate(labels)}
-        self.threshold = threshold
-        self.lora_merged = lora_merged
+
+    @property
+    def contract(self) -> GridHeadContract:
+        return self.spec.contract
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        return self.spec.labels
+
+    @property
+    def label_to_idx(self) -> dict[str, int]:
+        return self.spec.label_to_idx
+
+    @property
+    def threshold(self) -> float:
+        return self.spec.threshold
+
+    @property
+    def shape(self) -> GridShape:
+        return self.spec.shape
 
     @classmethod
     def load(
@@ -67,16 +88,32 @@ class LoRAHead:
         backbone: ViTBackbone,
         version: str = "latest",
         device: str = "cpu",
+        contract: GridHeadContract | None = None,
     ) -> LoRAHead:
         """Resolve a head by registry name; cached per (name, version, device)."""
-        try:
-            meta = registry.get_meta(name, version)
-            resolved_version = getattr(meta, "version", version)
-        except AttributeError as e:
+        getter = getattr(registry, "get_meta", None)
+        if getter is None:
             raise ConfigError(
                 "models registry missing get_meta",
                 context={"name": name, "version": version},
-            ) from e
+            )
+        try:
+            meta = getter(name, version)
+        except CaptchaError:
+            raise
+        except Exception as exc:
+            raise ConfigError(
+                "models registry returned unusable head meta",
+                context={"name": name, "version": version, "error": str(exc)},
+            ) from exc
+        resolved_version = getattr(meta, "version", None) or version
+
+        resolved_contract = contract if contract is not None else head_contract(name)
+        if resolved_contract.name != name:
+            raise ConfigError(
+                "head contract does not match the requested head",
+                context={"head": name, "contract": resolved_contract.name},
+            )
 
         key = (name, resolved_version, device)
         hit = _HEAD_CACHE.get(key)
@@ -88,38 +125,37 @@ class LoRAHead:
             if hit is not None:
                 return hit
 
-            weights_path = registry.download(name, resolved_version)
-            labels, threshold, lora_merged, classifier = _materialize_head(
+            weights_path, config = _load_source(registry, name, resolved_version, meta)
+            spec = head_spec_from_meta(resolved_contract, meta, config=config)
+            classifier = _materialize_head(
                 weights_path=weights_path,
                 backbone=backbone,
-                meta=meta,
+                spec=spec,
                 device=device,
             )
-            inst = cls(
-                name=name,
-                version=resolved_version,
-                backbone=backbone,
-                classifier=classifier,
-                labels=labels,
-                threshold=threshold,
-                lora_merged=lora_merged,
-            )
+            inst = cls(name=name, version=resolved_version, spec=spec, classifier=classifier)
             _HEAD_CACHE[key] = inst
             return inst
 
     def predict(self, features: torch.Tensor) -> torch.Tensor:
-        """Features [N, D] → class logits [N, C]."""
+        """Features [N, D] -> class logits [N, C]."""
         try:
             import torch  # noqa: F401
-        except ImportError as e:  # pragma: no cover
-            raise ModelInferenceError("torch missing at predict time") from e
+        except ImportError as exc:  # pragma: no cover - env check
+            raise ModelInferenceError("torch missing at predict time") from exc
 
         if features.ndim != 2:
             raise ModelInferenceError(
                 "features must be 2D [N, D]",
                 context={"shape": tuple(features.shape)},
             )
-        return self._classifier(features)
+        logits = self._classifier(features)
+        if logits.shape[1] != len(self.spec.labels):
+            raise ModelInferenceError(
+                "classifier width does not match the label list",
+                context={"classes": int(logits.shape[1]), "labels": len(self.spec.labels), "head": self.name},
+            )
+        return logits
 
     def pick_tiles_for_prompt(
         self,
@@ -127,90 +163,115 @@ class LoRAHead:
         prompt: str,
         *,
         threshold: float | None = None,
+        shape: GridShape | None = None,
     ) -> list[int]:
-        """Return tile indices whose score for `prompt` exceeds the threshold.
+        """Return tile indices whose score for the prompt crosses the threshold.
 
-        Interpretation: this is a per-tile *binary* decision — "does this tile
-        contain `<prompt>`?" We treat each row of logits as independent
-        sigmoid-space scores over the label vocab and pick tiles whose score
-        for the prompt's label index crosses `threshold`.
+        Per-tile binary decision: does this tile contain the prompt's object?
+        The grid shape is taken from the published head unless the payload
+        explicitly asked for another shape the contract allows (reCAPTCHA 4x4).
         """
         try:
             import torch
-        except ImportError as e:  # pragma: no cover
-            raise ModelInferenceError("torch missing at pick time") from e
+        except ImportError as exc:  # pragma: no cover - env check
+            raise ModelInferenceError("torch missing at pick time") from exc
 
-        label = prompt.strip().lower()
-        idx = self.label_to_idx.get(label)
-        if idx is None:
-            # alias lookup: bare-plural, trailing 's'
-            for alias in (label.rstrip("s"), f"{label}s"):
-                idx = self.label_to_idx.get(alias)
-                if idx is not None:
-                    break
-        if idx is None:
+        spec = self.spec if shape is None else self.spec.with_shape(shape)
+        label_idx = spec.resolve(prompt)
+
+        if features.ndim != 2:
             raise ModelInferenceError(
-                f"head '{self.name}' has no label matching prompt '{prompt}'",
-                context={"head": self.name, "version": self.version, "known_labels": self.labels[:32]},
+                "features must be 2D [N, D]",
+                context={"shape": tuple(features.shape)},
+            )
+        if int(features.shape[0]) != spec.shape.tile_count:
+            raise ModelInferenceError(
+                "tile count does not match the head grid",
+                context={
+                    "head": self.name,
+                    "shape": spec.shape.to_dict(),
+                    "expected": spec.shape.tile_count,
+                    "got": int(features.shape[0]),
+                },
             )
 
-        logits = self.predict(features)  # [N, C]
-        probs = torch.sigmoid(logits[:, idx])  # [N]
-        thr = self.threshold if threshold is None else threshold
-        picked = (probs >= thr).nonzero(as_tuple=False).flatten().tolist()
-        if not picked:
-            # degrade: argmax, always return at least one so caller doesn't ship empty
-            picked = [int(probs.argmax().item())]
-        return [int(i) for i in picked]
+        logits = self.predict(features)
+        probs = torch.sigmoid(logits[:, label_idx]).detach().cpu().tolist()
+        return spec.select(probs, threshold=threshold)
 
 
 # ---- internal --------------------------------------------------------------
+
+
+def _load_source(registry: Any, name: str, version: str, meta: Any) -> tuple[Path, dict[str, Any]]:
+    """Return (primary weights path, bundle config)."""
+    layout = getattr(meta, "layout", "single") or "single"
+    if layout == "bundle":
+        getter = getattr(registry, "get_artifact", None)
+        if getter is None:
+            raise ConfigError(
+                "models registry cannot read bundle artifacts",
+                context={"name": name, "version": version},
+            )
+        artifact = getter(name, version)
+        primary = getattr(artifact, "primary_path", None)
+        if primary is None:
+            raise ConfigError(
+                "bundle artifact has no primary weights file",
+                context={"name": name, "version": version},
+            )
+        config = getattr(artifact, "config", None)
+        return Path(primary), dict(config) if isinstance(config, Mapping) else {}
+
+    download = getattr(registry, "download", None)
+    if download is None:
+        raise ConfigError(
+            "models registry missing download",
+            context={"name": name, "version": version},
+        )
+    return Path(download(name, version)), {}
 
 
 def _materialize_head(
     *,
     weights_path: Path,
     backbone: ViTBackbone,
-    meta: Any,
+    spec: GridHeadSpec,
     device: str,
-) -> tuple[list[str], float, bool, Any]:
-    """Load safetensors weights, merge LoRA into backbone if present, build classifier."""
+) -> Any:
+    """Load classifier.weight/bias from safetensors and build the linear layer."""
     try:
         import torch
         from torch import nn
-    except ImportError as e:
+    except ImportError as exc:
         raise ConfigError(
-            "torch extra required to load LoRA heads",
+            "torch extra required to load classification heads",
             context={"hint": "uv pip install captcha-solver-classification[torch]"},
-        ) from e
+        ) from exc
 
     try:
         from safetensors.torch import load_file
-    except ImportError as e:
+    except ImportError as exc:
         raise ConfigError(
-            "peft extra (safetensors) required to load LoRA heads",
+            "peft extra (safetensors) required to load classification heads",
             context={"hint": "uv pip install captcha-solver-classification[peft]"},
-        ) from e
-
-    labels = _extract_labels(meta)
-    threshold = _extract_threshold(meta)
+        ) from exc
 
     try:
         tensors = load_file(str(weights_path), device=device)
-    except Exception as e:
+    except Exception as exc:
         raise ModelInferenceError(
             "failed to load head safetensors",
-            context={"path": str(weights_path), "error": str(e)},
-        ) from e
+            context={"path": str(weights_path), "error": str(exc)},
+        ) from exc
 
-    lora_merged = False
-    lora_keys = [k for k in tensors if ".lora_A." in k or ".lora_B." in k]
+    lora_keys = [key for key in tensors if ".lora_" in key]
     if lora_keys:
-        # FILL: merge LoRA deltas into backbone state_dict in-place using peft.
-        # Right now we rely on the classifier-only path; once the training
-        # script is wired we switch to: `peft.PeftModel.from_pretrained(...)`
-        # followed by `.merge_and_unload()`. See runbooks/lora-merge.md.
-        lora_merged = False
+        raise ConfigError(
+            "head weights carry LoRA deltas but merging is not implemented; "
+            "publish a frozen-backbone classifier head instead",
+            context={"path": str(weights_path), "lora_keys": lora_keys[:8]},
+        )
 
     clf_w = tensors.get("classifier.weight")
     clf_b = tensors.get("classifier.bias")
@@ -220,65 +281,42 @@ def _materialize_head(
             context={"path": str(weights_path), "keys": list(tensors.keys())[:32]},
         )
 
+    if getattr(clf_w, "ndim", 0) != 2:
+        raise ModelInferenceError(
+            "classifier.weight must be 2D [C, D]",
+            context={"path": str(weights_path), "shape": tuple(clf_w.shape)},
+        )
     num_classes, feat_dim = clf_w.shape
+    if clf_b is not None and (getattr(clf_b, "ndim", 0) != 1 or int(clf_b.shape[0]) != int(num_classes)):
+        raise ModelInferenceError(
+            "classifier.bias shape does not match classifier.weight",
+            context={"classes": int(num_classes), "bias_shape": tuple(clf_b.shape)},
+        )
     if feat_dim != backbone.feature_dim:
         raise ModelInferenceError(
             "head/backbone feature_dim mismatch",
-            context={"head_dim": feat_dim, "backbone_dim": backbone.feature_dim},
+            context={"head_dim": int(feat_dim), "backbone_dim": backbone.feature_dim},
         )
-    if num_classes != len(labels):
+    if num_classes != len(spec.labels):
         raise ModelInferenceError(
             "head classifier width != label count",
-            context={"classes": num_classes, "labels": len(labels)},
+            context={"classes": int(num_classes), "labels": len(spec.labels), "head": spec.name},
         )
 
-    classifier = nn.Linear(feat_dim, num_classes, bias=clf_b is not None).to(device).eval()
+    classifier = nn.Linear(int(feat_dim), int(num_classes), bias=clf_b is not None).to(device).eval()
     with torch.no_grad():
         classifier.weight.copy_(clf_w.to(device))
         if clf_b is not None:
             classifier.bias.copy_(clf_b.to(device))
-    for p in classifier.parameters():
-        p.requires_grad_(False)
-
-    return labels, threshold, lora_merged, classifier
-
-
-def _extract_labels(meta: Any) -> list[str]:
-    """Pull labels out of ModelMeta — meta.labels, or meta.extra['labels'], or meta.json path."""
-    for attr in ("labels",):
-        val = getattr(meta, attr, None)
-        if isinstance(val, list) and val and isinstance(val[0], str):
-            return [str(x).lower() for x in val]
-    extra = getattr(meta, "extra", None)
-    if isinstance(extra, dict):
-        val = extra.get("labels")
-        if isinstance(val, list):
-            return [str(x).lower() for x in val]
-        # stringified list fallback (some meta pipelines store JSON strings)
-        if isinstance(val, str):
-            try:
-                parsed = json.loads(val)
-                if isinstance(parsed, list):
-                    return [str(x).lower() for x in parsed]
-            except json.JSONDecodeError:
-                pass
-    raise ConfigError(
-        "head meta is missing a 'labels' list",
-        context={"meta_type": type(meta).__name__},
-    )
-
-
-def _extract_threshold(meta: Any) -> float:
-    extra = getattr(meta, "extra", None)
-    if isinstance(extra, dict) and "threshold" in extra:
-        try:
-            return float(extra["threshold"])
-        except (TypeError, ValueError):
-            pass
-    return 0.5
+    for param in classifier.parameters():
+        param.requires_grad_(False)
+    return classifier
 
 
 def clear_head_cache() -> None:
     """Tests only — drop all cached heads."""
     with _HEAD_LOCK:
         _HEAD_CACHE.clear()
+
+
+__all__ = ["LoRAHead", "clear_head_cache"]

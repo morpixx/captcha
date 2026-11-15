@@ -1,0 +1,10 @@
+{
+  "name": "friendly_v1_64byte_canary",
+  "type": "friendly_captcha",
+  "payload": {
+    "puzzle": "canary-friendly-v1-64.avkHfwAAAAAAAAAAAQACKAAAAAAAAAAAX9G3nr3vlhkREREREREREREREREREREREREREREREREREREREREREQ==",
+    "sitekey": "FCMGEMUD2M567T8G",
+    "websiteURL": "https://example.com/login"
+  },
+  "note": "friendly-pow v1 with the optional 32-byte additional-data tail: 64-byte buffer."
+}

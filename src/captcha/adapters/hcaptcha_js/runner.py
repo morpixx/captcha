@@ -1,17 +1,19 @@
 """Async client for the hCaptcha hsw/hsj bundle worker (server.js).
 
-The bundle is obfuscated JS that probes a browser-shaped realm (jsdom + canvas);
-mini-racer and the plain node:vm sidecar do not carry the DOM surface it reads,
-so it gets its own persistent Node process. Protocol: one JSON line in, one JSON
-line out, bytes base64-encoded:
+The bundle probes a browser-shaped realm (jsdom + canvas); neither mini-racer
+nor the node:vm sidecar carries that surface, so it gets a persistent Node
+process. Protocol: one JSON line in, one JSON line out, bytes base64-encoded:
 
     -> {"mode": "solve", "req": "<jwt>", "host": "example.com", "href": "...", "config": {...}}
     <- {"status": "ok", "kind": "string", "data": "<base64>", "len": 0}
     <- {"status": "error", "error": "<message>"}
 
-One runner per worker, shared across tasks: realms and the on-disk bundle cache
-are warmed per client build, and restarting Node per task throws that away.
-node_modules is not vendored - run "npm ci" in this directory once per image.
+One runner per worker: realms and the on-disk bundle cache are warmed per client
+build. node_modules is not vendored - run "npm ci" in this directory per image.
+
+A bundle that aborts inside wasm can leave its promise pending forever, so the
+read has an explicit deadline; on expiry Node is killed, which closes the pipe,
+instead of waiting for a line that never comes.
 """
 
 from __future__ import annotations
@@ -88,21 +90,8 @@ class JsBundleRunner:
     async def aclose(self) -> None:
         proc, self._proc = self._proc, None
         drainer, self._drainer = self._drainer, None
-        if proc is not None and proc.returncode is None:
-            try:
-                if proc.stdin is not None:
-                    proc.stdin.close()
-            except (OSError, RuntimeError):
-                pass
-            try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=3)
-            except (TimeoutError, ProcessLookupError):
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
+        if proc is not None:
+            await self._stop(proc)
         if drainer is not None:
             drainer.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -161,24 +150,27 @@ class JsBundleRunner:
                 raise JSRuntimeError("hcaptcha js: bundle worker pipes unavailable")
 
             line = json.dumps(request, separators=(",", ":")) + "\n"
+            reader = asyncio.create_task(proc.stdout.readline())
             try:
                 proc.stdin.write(line.encode("utf-8"))
                 await proc.stdin.drain()
-                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=self.timeout)
-            except TimeoutError as exc:
-                await self.aclose()
-                raise JSRuntimeError(
-                    "hcaptcha js: bundle worker timed out",
-                    context={"mode": request.get("mode"), "timeout_s": self.timeout},
-                ) from exc
+                done, _ = await asyncio.wait({reader}, timeout=self.timeout)
             except (BrokenPipeError, ConnectionResetError, OSError) as exc:
-                await self.aclose()
+                await self._abandon(reader, proc)
                 raise JSRuntimeError(
                     "hcaptcha js: bundle worker died",
                     context={"mode": request.get("mode"), "stderr": self._stderr_tail()},
                 ) from exc
+
+            if not done:
+                await self._abandon(reader, proc)
+                raise JSRuntimeError(
+                    "hcaptcha js: bundle worker timed out",
+                    context={"mode": request.get("mode"), "timeout_s": self.timeout},
+                )
+            raw = reader.result()
             if not raw:
-                await self.aclose()
+                await self._abandon(reader, proc)
                 raise JSRuntimeError(
                     "hcaptcha js: bundle worker returned nothing",
                     context={"mode": request.get("mode"), "stderr": self._stderr_tail()},
@@ -196,6 +188,28 @@ class JsBundleRunner:
                     context={"mode": request.get("mode"), "error": str(result.get("error"))[:600]},
                 )
             return result
+
+    async def _abandon(self, reader: asyncio.Task[bytes], proc: asyncio.subprocess.Process) -> None:
+        """Kill the worker so a pending pipe read can complete, then drop it."""
+        await self._stop(proc)
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError, OSError):
+            await reader
+
+    async def _stop(self, proc: asyncio.subprocess.Process) -> None:
+        if self._proc is proc:
+            self._proc = None
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except (OSError, RuntimeError):
+            pass
+        try:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except (TimeoutError, ProcessLookupError):
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
 
     async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
         stream = proc.stderr

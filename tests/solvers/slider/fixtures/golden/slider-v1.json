@@ -1,0 +1,33 @@
+{
+  "artifact": "slider-v1",
+  "version": "v1",
+  "tolerance_px": 1,
+  "min_accuracy": 1.0,
+  "min_coverage": 1.0,
+  "cases": [
+    {
+      "id": "slider-0001",
+      "type": "slider",
+      "image": "images/slider-bg-0001.png",
+      "payload": {"captcha_type": "slider", "piece_image": "pieces/piece-0000.png", "backend": "numpy"},
+      "expected": {"offset": 100},
+      "tags": ["slider", "classical"]
+    },
+    {
+      "id": "slider-0002",
+      "type": "slider",
+      "image": "images/slider-bg-0002.png",
+      "payload": {"captcha_type": "slider", "piece_image": "pieces/piece-0000.png", "backend": "numpy"},
+      "expected": {"offset": 160},
+      "tags": ["slider", "classical"]
+    },
+    {
+      "id": "slider-0003",
+      "type": "slider",
+      "image": "images/slider-bg-0003.png",
+      "payload": {"captcha_type": "slider", "piece_image": "pieces/piece-0000.png", "backend": "numpy"},
+      "expected": {"offset": 80},
+      "tags": ["slider", "classical"]
+    }
+  ]
+}

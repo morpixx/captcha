@@ -11,7 +11,7 @@ The contract this file pins down, in order:
 4. Failure envelopes surface `errorCode`/`errorDescription`, not a 5xx.
 5. An unsupported type or an exhausted quota is refused *before* the charge.
 6. Tasks of one account are invisible to another account.
-7. `/readyz` exercises both dependencies.
+7. `/readyz` exercises both dependencies and the worker-lane heartbeat.
 
 Nothing here calls a captcha vendor: the test drains the stream itself, which is
 the worker's job in production, and writes the result the worker would write.
@@ -28,6 +28,7 @@ import msgspec
 import pytest
 from support import CLIENT_KEY, OTHER_CLIENT_KEY, create_payload
 
+from captcha.adapters.queue.capabilities import CapabilityRegistry
 from captcha.adapters.queue.keys import stream_name, task_hash_key
 from captcha.adapters.storage import AccountRepo, TaskRepo
 from captcha.domain.enums import CaptchaType, SolveMode, TaskStatus
@@ -239,12 +240,33 @@ async def test_malformed_task_id_is_not_found(client: Any, account: Any) -> None
     assert body["errorCode"] == "ERROR_TASK_NOT_FOUND"
 
 
-async def test_readyz_checks_redis_and_postgres(client: Any, state: AppState) -> None:
-    response = await client.get("/readyz")
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body == {"ok": True, "redis": True, "postgres": True}
+async def test_readyz_needs_a_live_lane_heartbeat(client: Any, state: AppState) -> None:
+    """Readiness = Redis + Postgres + a fresh worker heartbeat, not just the two.
+
+    A gateway that sells types to an empty fleet is worse than one that reports
+    not-ready, so the cold probe must be 503 and name the missing lane check.
+    """
+    cold = await client.get("/readyz")
+    body = cold.json()
+    assert cold.status_code == 503, body
+    assert body["ok"] is False
+    assert body["redis"] is True
+    assert body["postgres"] is True
+    assert body["lanes"] is False
+    assert "errors" in body
+
+    await CapabilityRegistry(state.redis, prefix=state.settings.redis_stream_prefix).heartbeat(
+        "cv",
+        "it-worker",
+        types=(CaptchaType.TEXT,),
+    )
+
+    warm = await client.get("/readyz")
+    body = warm.json()
+    assert warm.status_code == 200, body
+    assert body["ok"] is True
+    assert body["lanes"] is True
+    assert body["live_lanes"] == ["cv"]
 
     health = await client.get("/healthz")
     assert health.json() == {"ok": True}
-

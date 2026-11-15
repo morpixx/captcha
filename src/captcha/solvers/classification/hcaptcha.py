@@ -1,19 +1,12 @@
-"""hCaptcha + hCaptcha Enterprise grid solver.
+"""hCaptcha-shaped grid classifier (generic classification_grid only).
 
-Also registered as the generic CLASSIFICATION_GRID handler — the live hCaptcha
-challenge is just `image_b64 + prompt + 3x3 grid`, same shape as the generic
-grid type, so the same solver serves both. Enterprise variant is pure
-re-skinning, no payload change.
+The live hCaptcha challenge answer is a token minted by the browser or HTTP
+wire solver (captcha.solvers.hcaptcha.*). This solver is the CV half: given a
+pre-extracted grid + prompt it returns tile indices, and it is enrolled under
+classification_grid only. Claiming hcaptcha / hcaptcha_enterprise here would
+project indices into a solution shape that expects a token.
 
-Default head: `hcaptcha-v1` in captcha-models.
-
-Example payload:
-    {
-      "image_b64": "<png bytes b64>",
-      "prompt": "motorcycle",
-      "rows": 3,
-      "cols": 3
-    }
+Default head: hcaptcha-v1 (3x3). See solvers/classification/grid.py.
 """
 
 from __future__ import annotations
@@ -22,6 +15,7 @@ from captcha.domain import CaptchaType
 from captcha.solvers import SolverInfo
 
 from .base_grid import GridClassifier
+from .grid import HEADS
 
 
 class HCaptchaSolver(GridClassifier):
@@ -36,6 +30,4 @@ class HCaptchaSolver(GridClassifier):
         version="0.1.0",
     )
 
-    default_head_name = "hcaptcha-v1"
-    default_rows = 3
-    default_cols = 3
+    head = HEADS["hcaptcha-v1"]

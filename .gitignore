@@ -1,4 +1,4 @@
-﻿# python
+# python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -68,3 +68,7 @@ proxies.txt
 
 # import-linter (grimp) dependency-graph cache
 .import_linter_cache/
+
+# hcaptcha_js bundle worker: npm deps and the fetched hsw/hsj bundle cache
+src/captcha/adapters/hcaptcha_js/node_modules/
+src/captcha/adapters/hcaptcha_js/.cache/

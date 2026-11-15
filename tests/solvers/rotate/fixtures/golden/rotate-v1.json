@@ -1,0 +1,25 @@
+{
+  "artifact": "rotate-v1",
+  "version": "v1",
+  "tolerance_px": 0,
+  "min_accuracy": 1.0,
+  "min_coverage": 1.0,
+  "cases": [
+    {
+      "id": "rotate-0001",
+      "type": "rotate",
+      "image": "images/rotate-0001.png",
+      "payload": {"captcha_type": "rotate", "prefer": "auto"},
+      "expected": {"angle": 30},
+      "tags": ["rotate", "fake-weights"]
+    },
+    {
+      "id": "rotate-0002",
+      "type": "rotate",
+      "image": "images/rotate-0002.png",
+      "payload": {"captcha_type": "rotate", "prefer": "auto"},
+      "expected": {"angle": 200},
+      "tags": ["rotate", "fake-weights"]
+    }
+  ]
+}

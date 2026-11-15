@@ -1,120 +1,87 @@
-# Load tests: createTask at 1k/s
+# Load tests
 
-Measures the gateway ingress, not a captcha vendor. A fake solver drains the
-lane streams and writes results back to Redis immediately, so the numbers are
-the gateway + queue + (optionally) Postgres cost of one `POST /createTask`.
+Two ways to put the gateway under load. Neither contacts a captcha vendor, a
+proxy, a model or a browser: the point is the ingress, the queue and the state
+store.
 
-```
-k6 / locust ──POST /createTask──▶ gateway ──XADD──▶ captcha:stream:<lane>
-                                                          │
-                                        tools/load/fake_solver.py
-                                                          │
-                                               HSET captcha:task:<id>
-                                                          │
-k6 / locust ──GET /getTaskResult───────────────────────────┘
-```
+How to read the numbers the Python driver prints, and what each field means:
+`docs/load-testing.md`. This file is the operator's map of the directory.
 
-Nothing here contacts a live captcha site, a proxy, a model or a browser.
-
-## Files
-
-| file | purpose |
+| path | what it is |
 |---|---|
+| `config.py` | frozen driver config, built from argv; the key is masked in the report |
+| `run.py` | `python -m tools.load.run` — open-loop `createTask`/`getTaskResult` driver |
+| `scenario.py` | the paced loop behind the driver (one sample = create + poll to terminal) |
+| `stats.py`, `report.py` | percentiles, time buckets, text/JSON rendering, verdicts |
+| `queue_probe.py` | `XLEN` + consumer-group lag sampled straight from Redis |
+| `devstack.py` | `python -m tools.load.devstack` — real gateway + real worker loops, fake solver |
+| `fake_solver.py` | in-process `Solver` that sleeps and answers `text='load-test'` |
+| `stream_drainer.py` | external drainer: answers lane streams without starting a gateway |
 | `create_task.js` | k6, constant-arrival-rate, default 1000/s |
-| `locustfile.py` | locust alternative for a long soak / machines without k6 |
-| `fake_solver.py` | consumes every lane, answers `ready` in Redis (optional Postgres mirror) |
+| `locustfile.py` | locust variant for a long soak or a machine without k6 |
 
-## Prerequisites
+## A. Python driver (primary)
 
-- docker compose (Redis + Postgres)
-- k6 (`winget install k6`, `brew install k6`, or the apt repo)
-- the repo's Python environment (`uv sync --extra dev`) for the local gateway,
-  the account CLI and the fake solver
-
-## 1. Infrastructure
-
-Start only the datastores and the migration; do **not** start the real workers
-— the fake solver has to be the only consumer for these tests.
+Everything below is production code except the solver call itself.
 
 ```bash
-docker compose up -d redis postgres migrate
+# terminal 1: stack on one box (redis :6399, pg :55432 — any throwaway pair)
+PYTHONPATH=src python -m tools.load.devstack \
+    --type text_captcha --workers 4 --concurrency 1024 \
+    --redis-url redis://127.0.0.1:6399/1 \
+    --postgres-url postgresql+asyncpg://captcha:captcha@127.0.0.1:55432/captcha --flush
+
+# terminal 2: load + report
+PYTHONPATH=src python -m tools.load.run \
+    --url http://127.0.0.1:8080 --key <clientKey> --type text_captcha \
+    --rate 1000 --duration 60 --redis-url redis://127.0.0.1:6399/1 \
+    --json runs/soak-01.json --label soak-01 --strict
 ```
 
-## 2. Gateway with quotas disabled
-
-The production defaults (60 creates/min, 100 active tasks) reject a 1k/s load in
-under a second. Override them in the shell that starts the gateway; never put
-load-test values into `.env`.
-
-PowerShell:
-
-```powershell
-$env:PYTHONPATH = "$PWD/src"
-$env:REDIS_URL = "redis://127.0.0.1:6379/0"
-$env:POSTGRES_URL = "postgresql+asyncpg://captcha:captcha@127.0.0.1:5432/captcha"
-$env:RATE_LIMIT_CREATE_PER_MIN = "0"
-$env:MAX_ACTIVE_TASKS_PER_ACCOUNT = "0"
-$env:MAX_DAILY_TASKS = "0"
-$env:MAX_DAILY_SPEND = "0"
-uv run python -m captcha.services.gateway
-```
-
-bash:
+Through the Makefile:
 
 ```bash
-export PYTHONPATH="$PWD/src"
-export RATE_LIMIT_CREATE_PER_MIN=0 MAX_ACTIVE_TASKS_PER_ACCOUNT=0
-export MAX_DAILY_TASKS=0 MAX_DAILY_SPEND=0
-uv run python -m captcha.services.gateway
+make load-stack                       # devstack, waits for Ctrl+C
+make load-run KEY=<clientKey> RATE=1000 DURATION=60
 ```
 
-One process is enough for a smoke run. For a sustained 1k/s use the container
-image with more uvicorn workers (`CAPTCHA_GATEWAY_WORKERS`) and watch CPU: the
-gateway is the system under test.
+Prerequisites are outside the process: Redis and Postgres with migrations
+applied (`python -m captcha.services.cli init-db`) and a funded account
+(`python -m captcha.services.cli create-account --name load --balance 500`).
+The stand disables quotas itself, otherwise a soak measures the limiter.
 
-## 3. Funded account
+## B. External generator (k6 / locust)
+
+Use this when the gateway is already running — a deployed compose, or the
+`devstack` from section A — and you want an arrival-rate generator you do not
+have to trust by the driver's own numbers.
 
 ```bash
-uv run python -m captcha.services.cli create-account --name load --balance 500
-# prints: key <hex>  — export it
-export CLIENT_KEY=<hex>
+make load KEY=<clientKey> URL=http://127.0.0.1:8080 RATE=1000 DURATION=60s
+make load-locust KEY=<clientKey> USERS=1000 SPAWN=200 DURATION=60s
 ```
 
-60 seconds at 1k/s is 60 000 tasks. At the catalog price of `text_captcha`
-(0.0005) that is ~30 currency units; 500 leaves room for repeats.
+`make load` runs `create_task.js` (k6 constant-arrival-rate, thresholds below).
+`make load-locust` runs the locust variant: VU-based, so 1000 users approximate
+1000/s only while the gateway answers in about a second; for honest arrival
+rates use k6.
 
-## 4. Fake solver
+Tasks must be answered by something. Two options:
 
-```bash
-export PYTHONPATH="$PWD/src"
-python tools/load/fake_solver.py --redis redis://127.0.0.1:6379/0
-```
+- `python -m tools.load.devstack` already runs the real worker loops with the
+  fake solver — point k6 at the gateway it served;
+- on a stack whose workers you do not control, run the external drainer:
 
-It consumes `http`, `cv`, `protocol` and `browser` lanes with its own consumer
-groups, so it can run next to the stack without stealing messages. `--db` also
-mirrors each result into Postgres — use it only when storage is part of the test,
-since 1k inserts/s makes Postgres the bottleneck.
+  ```bash
+  PYTHONPATH=src python tools/load/stream_drainer.py \
+      --redis redis://127.0.0.1:6379/0 --prefix captcha
+  ```
 
-## 5. Run k6
+  It consumes every lane with its own consumer groups, writes `processing` then
+  `ready` into the task hash and acks. `--db` also mirrors results into Postgres;
+  leave it off unless storage is part of the measurement.
 
-```bash
-k6 run --env CLIENT_KEY="$CLIENT_KEY" \\
-       --env BASE_URL=http://127.0.0.1:8080 \\
-       --env RATE=1000 \\
-       --env DURATION=60s \\
-       tools/load/create_task.js
-```
-
-or through the Makefile:
-
-```bash
-make load KEY="$CLIENT_KEY" URL=http://127.0.0.1:8080 RATE=1000 DURATION=60s
-```
-
-Useful knobs: `TYPE=text_captcha,image_to_text` (comma-separated mix),
-`PRE_VUS`/`MAX_VUS` when k6 reports `dropped_iterations`.
-
-Thresholds in `create_task.js`:
+k6 thresholds in `create_task.js`:
 
 | metric | threshold | meaning |
 |---|---|---|
@@ -122,34 +89,21 @@ Thresholds in `create_task.js`:
 | `http_req_failed` | <0.1% | transport/5xx failures only |
 | `create_task_latency_ms` p95 | <300 ms | ingress latency |
 | `create_task_latency_ms` p99 | <750 ms | tail |
-| `dropped_iterations` | 0 | the generator kept up with 1k/s |
+| `dropped_iterations` | 0 | the generator kept up with 1000/s |
 
 A rejected request is logged every 100 failures with its `errorId`. The usual
-ones: `ERROR_NO_SLOT_AVAILABLE` (a quota was not disabled), `ERROR_ZERO_BALANCE`
-(account empty), `ERROR_TASK_NOT_SUPPORTED` (type not registered in this
-deployment).
-
-## 6. Locust alternative
-
-```bash
-export CLIENT_KEY=...
-locust -f tools/load/locustfile.py --headless \\
-       -u 1000 -r 200 --run-time 60s --host http://127.0.0.1:8080
-```
-
-Locust is VU-based: 1 000 users with `wait_time = 0` approximates 1k/s only if
-the gateway latency stays around 1s per request. For an honest arrival-rate
-target use k6; use locust for a long soak and per-request statistics.
+ones: `ERROR_NO_SLOT_AVAILABLE` (a quota was not disabled), `ERROR_ZERO_BALANCE`,
+`ERROR_TASK_NOT_SUPPORTED` (the type is not registered in this deployment).
 
 ## Cleanup
 
-The run creates tens of thousands of rows and task hashes. On a throwaway stack:
+A run creates tens of thousands of rows and task hashes. On a throwaway stack:
 
 ```bash
 docker compose down -v
 ```
 
-On a shared dev stack, remove only the load-test keys:
+On a shared dev stack remove only the load-test keys:
 
 ```bash
 redis-cli --scan --pattern 'captcha:task:*' | xargs -r redis-cli del
@@ -158,3 +112,12 @@ redis-cli --scan --pattern 'captcha:stream:*' | xargs -r redis-cli del
 
 and truncate `tasks`/`transactions` if `--db` was used. Never point this at
 production: the load test disables quotas and bills a real account.
+
+## Tests
+
+```bash
+PYTHONPATH=src pytest tests/load -q
+```
+
+No Redis or Postgres needed: the driver runs against a mocked gateway and the
+fake solver is exercised through the registry.

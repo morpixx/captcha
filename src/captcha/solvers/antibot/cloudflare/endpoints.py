@@ -2,12 +2,15 @@
 
 Cloudflare's challenge platform is served under the *target* origin at a
 fixed path. The managed-challenge HTML carries three dynamic tokens we
-reconstruct — call it the (``cvId``, ``cType``, ``cRay``) triplet — and
+reconstruct — call it the (`cvId`, `cType`, `cRay`) triplet — and
 POST back to the orchestrate endpoint. The second, generate-JS endpoint
 is scraped from the same HTML.
 
 Turnstile runs on `challenges.cloudflare.com` instead and has its own
 problem shape (sitekey + widget), so its endpoints are kept separate.
+The widget's token-mint POST is listed for documentation only: its byte
+schema is gated (docs/reverse-2026.md §3), which is why the solver escalates
+to the browser lane instead of replaying it.
 """
 
 from __future__ import annotations
@@ -19,10 +22,19 @@ CF_FLOW_FMT: str = "{origin}/cdn-cgi/challenge-platform/h/{variant}/flow/ov1/{cv
 
 # Turnstile — hosted on cloudflare.
 TURNSTILE_ORIGIN: str = "https://challenges.cloudflare.com"
-TURNSTILE_SITEKEY_API: str = "https://challenges.cloudflare.com/turnstile/v0/api.js"
-# FILL: siteverify-adjacent endpoint for headless flow (/turnstile/v0/g/ or /turnstile/v0/t/?)
-TURNSTILE_WIDGET_FMT: str = "https://challenges.cloudflare.com/turnstile/v0/{variant}/{sitekey}"
+TURNSTILE_API_JS: str = "https://challenges.cloudflare.com/turnstile/v0/api.js"
+TURNSTILE_HOST: str = "challenges.cloudflare.com"
+# The unversioned loader 302s to (or embeds) /turnstile/v0/b/<hash>/api.js.
+TURNSTILE_BUNDLE_RE: str = r"/turnstile/v0/b/([A-Za-z0-9_-]+)/api\.js"
+# Widget document for one sitekey; `{variant}` is the challenge-platform build
+# segment read out of the bundle (b/g today).
+TURNSTILE_WIDGET_FMT: str = (
+    "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/{variant}/turnstile/if/ov2/av0/{sitekey}"
+)
+# Token mint. No public capture of the request body exists; kept as a marker.
+TURNSTILE_MINT_FMT: str = (
+    "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/{variant}/turnstile/f/av0/rch/{segment}/{sitekey}"
+)
 
 # Challenge-platform variants rotate with Cloudflare releases.
-# FILL: dump {variant} segments from a captured session; cache per site.
 DEFAULT_VARIANT: str = "b"

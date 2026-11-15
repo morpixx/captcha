@@ -50,6 +50,7 @@ class SolutionKind(StrEnum):
     BBOX = "bbox"
     ROTATE = "rotate"
     SLIDER = "slider"
+    HOPSCOTCH = "hopscotch"
 
 
 class TypeSpec(msgspec.Struct, frozen=True, kw_only=True):
@@ -84,6 +85,8 @@ _ROWS: tuple[TypeSpec, ...] = (
     _row(CaptchaType.CLASSIFICATION_GRID, "cv", "0.00100", SolutionKind.GRID),
     _row(CaptchaType.DRAW_AROUND, "cv", "0.00120", SolutionKind.COORDS),
     _row(CaptchaType.DRAG_DROP, "cv", "0.00120", SolutionKind.COORDS),
+    # Custom order-independent card choice (not one of the 62 vendor types).
+    _row(CaptchaType.HOPSCOTCH, "cv", "0.00200", SolutionKind.HOPSCOTCH),
     # --- lane rule -------------------------------------------------------
     # "cv" means the worker needs the ML stack (torch / opencv / whisper) or
     # delegates to a solver that does. A type whose solver calls _solve_cv() is
