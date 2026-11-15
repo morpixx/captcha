@@ -6,6 +6,7 @@ import msgspec
 import structlog
 
 from captcha.domain.lanes import pick_lane
+from captcha.domain.redaction import redact_envelope
 from captcha.domain.task import TaskEnvelope
 
 from .keys import (
@@ -29,6 +30,8 @@ _envelope_decoder = msgspec.msgpack.Decoder(TaskEnvelope)
 
 
 def _encode(envelope: TaskEnvelope) -> bytes:
+    # The whole envelope, never a projection: retries, lane_hops and status
+    # must survive every requeue, escalation and DLQ write unchanged.
     return _envelope_encoder.encode(envelope)
 
 
@@ -44,6 +47,21 @@ def _extract_payload(fields: dict[Any, Any]) -> bytes:
     if raw is None:
         raise ValueError("stream entry missing 'data' field")
     return raw if isinstance(raw, (bytes, bytearray)) else bytes(raw, "utf-8")
+
+
+def _dlq_payload(fields: dict[Any, Any] | None) -> bytes:
+    """Best-effort redacted copy of an entry we could not decode.
+
+    The bytes that broke the decoder are exactly the ones that may carry proxy
+    credentials, so they are never copied verbatim: decode + redact when
+    possible, empty payload when not. The reason field keeps the diagnosis.
+    """
+    if not fields:
+        return b""
+    try:
+        return _encode(redact_envelope(_decode(_extract_payload(fields))))
+    except Exception:
+        return b""
 
 
 class Producer:
@@ -97,7 +115,8 @@ class Producer:
         reason: str,
     ) -> str:
         stream = dead_letter_stream(self._prefix)
-        payload = _encode(envelope)
+        # The DLQ outlives the task hash, so it gets the redacted copy.
+        payload = _encode(redact_envelope(envelope))
         message_id = await self._r.xadd(
             stream,
             {_FIELD: payload, _REASON_FIELD: reason.encode("utf-8")},
@@ -116,7 +135,9 @@ class Consumer:
         2. `read()` — XREADGROUP new entries with BLOCK + COUNT.
 
     Retry policy lives in `fail()`: ack then re-XADD with `retries += 1`, or
-    route to the dead-letter stream once `retries >= max_retries`.
+    route to the dead-letter stream once `retries >= max_retries`. The bumped
+    copy is a `msgspec.structs.replace`, so `lane_hops` and every other field
+    travel with it.
     """
 
     def __init__(
@@ -198,12 +219,12 @@ class Consumer:
                         stream=self._stream,
                         error=str(exc),
                     )
-                    # Poison pill: ack and shove the raw bytes into DLQ.
+                    # Poison pill: ack and push a redacted copy into the DLQ.
                     await self._r.xack(self._stream, self._group, msg_id)
                     await self._r.xadd(
                         self._dlq,
                         {
-                            _FIELD: _extract_payload(fields) if fields else b"",
+                            _FIELD: _dlq_payload(fields),
                             _REASON_FIELD: f"decode_failed:{exc}".encode(),
                         },
                         maxlen=self._maxlen,
@@ -263,7 +284,7 @@ class Consumer:
             await self._r.xadd(
                 self._dlq,
                 {
-                    _FIELD: _encode(envelope),
+                    _FIELD: _encode(redact_envelope(envelope)),
                     _REASON_FIELD: reason.encode("utf-8"),
                 },
                 maxlen=self._maxlen,
@@ -276,6 +297,8 @@ class Consumer:
                 reason=reason,
             )
             return True
+        # replace() copies every field, including lane_hops: a retried task
+        # keeps its lane-hop budget.
         bumped = msgspec.structs.replace(envelope, retries=next_retries)
         await self._r.xadd(
             self._stream,

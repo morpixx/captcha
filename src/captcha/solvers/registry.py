@@ -5,7 +5,7 @@ import importlib.metadata
 import logging
 from collections.abc import Iterable
 
-from captcha.domain.enums import CaptchaType
+from captcha.domain.enums import CaptchaType, SolveMode
 from captcha.solvers.base import Solver, SolverInfo
 
 log = logging.getLogger(__name__)
@@ -41,8 +41,26 @@ class SolverRegistry:
     def for_type(self, ct: CaptchaType) -> list[type[Solver]]:
         return list(self._by_type.get(ct, ()))
 
-    def pick(self, ct: CaptchaType, *, allow_experimental: bool = False) -> type[Solver] | None:
-        cands = self._by_type.get(ct, [])
+    def pick(
+        self,
+        ct: CaptchaType,
+        *,
+        mode: SolveMode = SolveMode.AUTO,
+        allow_experimental: bool = False,
+    ) -> type[Solver] | None:
+        """Best solver for `ct` under `mode`.
+
+        `mode` filters by transport before the old preference order:
+        - `HTTP` keeps only solvers with `info.http`, so an HTTP worker never
+          instantiates a browser-only solver whose `solve_http` cannot work.
+        - `BROWSER` keeps only solvers with `info.browser` (`solve_browser`
+          override present); the browser lane uses this.
+        - `AUTO` keeps everything and preserves the historical result.
+
+        Remaining order: non-experimental first, then first registered (only
+        when the caller opted into experimental solvers).
+        """
+        cands = [c for c in self._by_type.get(ct, []) if _supports_mode(c.info, mode)]
         if not cands:
             return None
         non_exp = [c for c in cands if not c.info.experimental]
@@ -55,6 +73,15 @@ class SolverRegistry:
 
     def all_solvers(self) -> Iterable[type[Solver]]:
         return self._by_name.values()
+
+
+def _supports_mode(info: SolverInfo, mode: SolveMode) -> bool:
+    """Transport filter mirrored from `Solver.supports`, usable without an instance."""
+    if mode == SolveMode.HTTP:
+        return info.http
+    if mode == SolveMode.BROWSER:
+        return info.browser
+    return True
 
 
 _global_registry = SolverRegistry()
