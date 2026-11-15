@@ -1,137 +1,139 @@
-"""Shared base for every grid-classification solver.
+"""Shared solve path for every prompt-conditioned grid solver.
 
-Each per-captcha solver (hcaptcha, recaptcha, funcaptcha, awswaf, shein)
-subclasses `GridClassifier`, overrides `default_head_name`, and inherits the
-full solve path: decode → slice → backbone.encode → head.pick_tiles_for_prompt.
+Payload contract (the same across subclasses; vendor wrappers adapt before the
+worker, not here):
 
-Payload contract (same across every subclass; sites that wrap it differently
-get adapted at the worker, not here):
+    image_b64  str    base64 of the full grid (aliases: image, body)
+    prompt     str    object/scene name or full instruction (question/target)
+    rows/cols  int?   grid shape; default is the head's published shape
+    head       str?   head-name override; must be one of grid.HEADS
+    threshold  float? per-call sigmoid threshold, 0..1
 
-    {
-      "image_b64": str,   # base64 of the full grid, with or without data: URI
-      "prompt":    str,   # object/scene name, e.g. "bus"
-      "rows":      int,   # default 3
-      "cols":      int,   # default 3
-      "head":      str?,  # optional head-name override
-      "threshold": float? # optional per-call sigmoid threshold
-    }
+Path: resolve head contract -> load head -> resolve grid -> decode -> slice ->
+ViT encode -> head.pick_tiles_for_prompt -> SolverResult(indices).
+
+Failure shape, no fallback predictor:
+    ERR_CONFIG           no ctx.models, unknown head, missing meta/labels
+    ERR_MODEL_INFERENCE  unreadable weights, dimension mismatch, unknown prompt
+    ERR_UNSOLVABLE       broken image/prompt/grid in the task payload
 """
 
 from __future__ import annotations
 
 import time
-from typing import ClassVar
+from typing import Any, ClassVar
 
-from captcha.domain import SolveMode, SolverResult, Task
-from captcha.domain.errors import ConfigError, ModelInferenceError, UnsolvableError
+from captcha.domain import CaptchaType, SolveMode, SolverResult, Task
+from captcha.domain.errors import CaptchaError, ConfigError, UnsolvableError
 from captcha.solvers import Solver, SolverContext
 
 from ._tiles import decode_base64_image, slice_grid, tiles_to_batch
 from .backbone import ViTBackbone
+from .grid import GridHeadContract, coerce_threshold, head_contract, resolve_grid
 from .head import LoRAHead
+
+#: Token types served by browser/HTTP wire flows, never by a grid classifier.
+#: A grid answer is a list of tile indices; projecting it as a token is a lie.
+_TOKEN_GRID_TYPES = frozenset({CaptchaType.HCAPTCHA, CaptchaType.HCAPTCHA_ENTERPRISE})
 
 
 class GridClassifier(Solver):
-    """Abstract grid solver — subclasses set `default_head_name` + `info`."""
+    """Abstract grid solver. Subclasses set head = HEADS["..."] and info."""
 
-    default_head_name: ClassVar[str] = ""
-    default_rows: ClassVar[int] = 3
-    default_cols: ClassVar[int] = 3
+    head: ClassVar[GridHeadContract]
     backbone_model: ClassVar[str] = "google/vit-base-patch16-224-in21k"
 
-    async def prepare(self, ctx: SolverContext) -> None:
-        """Warm the shared backbone and this solver's default head.
-
-        Fails-fast on misconfig: better to crash the worker at startup than at
-        task time with half a grid half-classified.
-        """
-        if not self.default_head_name:
-            raise ConfigError(
-                f"{type(self).__name__} missing default_head_name",
-                context={"solver": self.info.name},
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        info = getattr(cls, "info", None)
+        head = getattr(cls, "head", None)
+        if info is None:
+            return
+        banned = sorted(item.value for item in _TOKEN_GRID_TYPES.intersection(info.types))
+        if banned:
+            raise TypeError(
+                f"{cls.__name__} is a grid classifier and cannot claim token type(s): {', '.join(banned)}"
             )
+        if not isinstance(head, GridHeadContract):
+            raise TypeError(f"{cls.__name__} must set head = HEADS['<name>']")
+
+    async def prepare(self, ctx: SolverContext) -> None:
+        """Warm the shared backbone and this solver's head.
+
+        A worker must boot with an empty model bucket: a missing head is
+        logged here and raised as ERR_CONFIG at task time, never faked.
+        """
         device = self._pick_device(ctx)
         backbone = ViTBackbone.get(device=device, model_name=self.backbone_model)
-        if ctx.models is not None:
-            # Preload the default head so the first request doesn't eat an S3 fetch.
-            try:
-                LoRAHead.load(ctx.models, name=self.default_head_name, backbone=backbone, device=device)
-            except (ConfigError, ModelInferenceError) as e:
-                # FILL: once the training pipeline publishes real heads, downgrade
-                # this to a hard failure. Until then, warm-load is best-effort so
-                # the worker can still boot in dev with an empty model bucket.
-                if ctx.logger is not None:
-                    ctx.logger.warning(
-                        "classification.head.warmup_failed",
-                        head=self.default_head_name,
-                        solver=self.info.name,
-                        error=str(e),
-                    )
+        if ctx.models is None:
+            return
+        try:
+            LoRAHead.load(
+                ctx.models,
+                name=self.head.name,
+                backbone=backbone,
+                device=device,
+                contract=self.head,
+            )
+        except CaptchaError as exc:
+            if ctx.logger is not None:
+                ctx.logger.warning(
+                    "classification.head.warmup_failed",
+                    head=self.head.name,
+                    solver=self.info.name,
+                    error=str(exc),
+                )
 
     async def solve_http(self, task: Task, ctx: SolverContext) -> SolverResult:
-        t0 = time.perf_counter()
+        started = time.perf_counter()
         payload = task.payload or {}
 
-        image_b64 = payload.get("image_b64") or payload.get("image")
-        prompt = payload.get("prompt") or payload.get("question") or payload.get("target")
-        rows = int(payload.get("rows", self.default_rows))
-        cols = int(payload.get("cols", self.default_cols))
-        head_name = payload.get("head") or self.default_head_name
-        threshold = payload.get("threshold")
-
+        image_b64 = _first(payload, "image_b64", "image", "body")
+        prompt = _first(payload, "prompt", "question", "target", "textinstructions")
         if not image_b64:
             raise UnsolvableError("payload missing image_b64", context={"solver": self.info.name})
-        if not prompt or not isinstance(prompt, str):
+        if not isinstance(prompt, str) or not prompt.strip():
             raise UnsolvableError("payload missing prompt", context={"solver": self.info.name})
+
+        head_name = str(payload.get("head") or self.head.name)
+        contract = self.head if head_name == self.head.name else head_contract(head_name)
 
         if ctx.models is None:
             raise ConfigError(
                 "classification solver requires ctx.models (captcha.adapters.weights.Registry)",
-                context={"solver": self.info.name},
+                context={"solver": self.info.name, "head": head_name},
             )
 
         device = self._pick_device(ctx)
         backbone = ViTBackbone.get(device=device, model_name=self.backbone_model)
-
-        try:
-            head = LoRAHead.load(ctx.models, name=head_name, backbone=backbone, device=device)
-        except ModelInferenceError:
-            raise
-        except ConfigError as e:
-            # No weights registered for this prompt/head yet → direct the op to
-            # the runbook that describes how to train one. Don't silently guess.
-            raise ModelInferenceError(
-                f"no classification head registered for '{head_name}' — see runbooks/{self.info.name}.md",
-                context={
-                    "solver": self.info.name,
-                    "head": head_name,
-                    "prompt": prompt,
-                    "hint": "train a LoRA head, push to captcha-models, bump 'latest'",
-                    "underlying": e.to_dict() if hasattr(e, "to_dict") else str(e),
-                },
-            ) from e
-
-        image = decode_base64_image(image_b64)
-        tiles = slice_grid(image, rows=rows, cols=cols)
-        batch = tiles_to_batch(tiles, device=device)
-        feats = backbone.encode(batch)
-
-        indices = head.pick_tiles_for_prompt(
-            feats,
-            prompt,
-            threshold=float(threshold) if threshold is not None else None,
+        head = LoRAHead.load(
+            ctx.models,
+            name=head_name,
+            backbone=backbone,
+            device=device,
+            contract=contract,
         )
 
-        latency_ms = (time.perf_counter() - t0) * 1000.0
+        shape = resolve_grid(payload, contract, fallback=head.shape)
+        raw_threshold = payload.get("threshold")
+        threshold = coerce_threshold(raw_threshold, source="payload") if raw_threshold is not None else None
+
+        image = decode_base64_image(image_b64)
+        tiles = slice_grid(image, rows=shape.rows, cols=shape.cols)
+        batch = tiles_to_batch(tiles, device=device)
+        features = backbone.encode(batch)
+        indices = head.pick_tiles_for_prompt(features, prompt, threshold=threshold, shape=shape)
+
         return SolverResult(
             indices=indices,
             solve_mode=SolveMode.HTTP,
-            latency_ms=latency_ms,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
             extra={
                 "head": head.name,
                 "head_version": head.version,
-                "rows": rows,
-                "cols": cols,
+                "rows": shape.rows,
+                "cols": shape.cols,
+                "threshold": head.threshold if threshold is None else threshold,
                 "backbone": backbone.model_name,
                 "device": device,
             },
@@ -140,7 +142,7 @@ class GridClassifier(Solver):
     # ---- helpers ------------------------------------------------------------
 
     def _pick_device(self, ctx: SolverContext) -> str:
-        """`cuda` if the context asks for GPU and torch has it; else cpu."""
+        """cuda if the context asks for GPU and torch has it; else cpu."""
         cfg = ctx.config
         preferred = None
         if cfg is not None:
@@ -156,3 +158,14 @@ class GridClassifier(Solver):
             except ImportError:
                 pass
         return "cpu"
+
+
+def _first(payload: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+__all__ = ["GridClassifier"]
