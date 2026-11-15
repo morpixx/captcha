@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+    from captcha.adapters.netguard import Resolver
     from captcha.adapters.queue import Producer, TaskStateStore
     from captcha.config import Settings
 
@@ -29,3 +30,6 @@ class AppState:
     #: deployment cannot solve is refused at the door instead of being charged
     #: for and left to time out.
     solver_types: frozenset[CaptchaType] = frozenset()
+    #: DNS resolver for the client-URL guard. None = the system resolver; tests
+    #: inject a stub so the gateway suite never touches DNS.
+    url_resolver: Resolver | None = None

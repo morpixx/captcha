@@ -16,7 +16,7 @@ from captcha.adapters.storage import AccountRepo, TaskRepo
 from captcha.adapters.storage.models import Task as DbTask
 from captcha.application.route_task import route_task
 from captcha.domain.enums import CaptchaType, TaskStatus
-from captcha.domain.errors import CaptchaError
+from captcha.domain.errors import CaptchaError, UrlRejectedError
 from captcha.domain.pricing import estimate_cost
 from captcha.domain.redaction import redact_payload
 from captcha.domain.solution import build_solution, host_for_payload
@@ -39,6 +39,7 @@ from captcha.services.gateway.schemas import (
     GetTaskResultRequest,
     GetTaskResultResponse,
     status_to_api,
+    validate_task_urls,
 )
 from captcha.services.gateway.state import AppState
 
@@ -75,6 +76,21 @@ async def create_task(
         _log.info("task.unsupported", type=ct.value, known=len(state.solver_types))
         return ORJSONResponse(envelope(ERR_UNSUPPORTED_TYPE), status_code=status.HTTP_200_OK)
 
+    # Client URLs are fetch targets for the solver (and for the browser lane):
+    # private/loopback/metadata hosts are refused before pricing, so a rejected
+    # target costs nothing and never reaches a stream (contract §8).
+    payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
+    payload.pop("type", None)
+    try:
+        await validate_task_urls(payload, resolver=getattr(state, "url_resolver", None))
+    except UrlRejectedError as exc:
+        field = str(exc.context.get("field") or "url")
+        _log.info("task.url_rejected", type=ct.value, field=field)
+        return ORJSONResponse(
+            classify(exc.code, f"{field}: URL is not a public http(s) target"),
+            status_code=status.HTTP_200_OK,
+        )
+
     cost = estimate_cost(ct)
 
     # Rate limit / quota, before the charge: a task the account isn't allowed
@@ -99,8 +115,6 @@ async def create_task(
         return ORJSONResponse(classify(exc.code, exc.message), status_code=status.HTTP_200_OK)
 
     # DB row first — the task id is the UUID the row carries.
-    payload: dict[str, Any] = body.task.model_dump(mode="json", by_alias=False, exclude_none=True)
-    payload.pop("type", None)
     # Postgres gets a credential-free copy: proxy*/cookies never reach JSONB.
     # The full payload stays on the Task/envelope and therefore in Redis (24h).
     db_task = await task_repo.create(
