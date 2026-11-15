@@ -1,0 +1,8 @@
+{
+  "generated_pass_UUID": "P1_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsIjoiLzEvOWYyYzRhNmU4YjBkMmY0aDZqOGsvaHNqLmpzIiwibiI6ImhzaiIsInQiOiJlNWY2YTdiOCJ9.5m5n1r8kQ2wV7cY3bX9dL0aZ4eF6gH8jK2mN4pQ6rS8",
+  "pass": true,
+  "c": null,
+  "key": "challenge-key-01",
+  "expiration": 120,
+  "sitekey": "10000000-ffff-ffff-ffff-000000000001"
+}
